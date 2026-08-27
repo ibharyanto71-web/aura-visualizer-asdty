@@ -77,7 +77,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   // AURA V14 — CONTOUR AURA
   // The aura is generated from the detected body silhouette itself:
   // BODY MASK -> BLURRED EXPANSION -> OUTER RING -> COLOR GRADIENT.
-  // The original photograph is never erased or recolored.
+  // The original photograph is always rendered last, guaranteeing zero aura color inside the body.
 
   function ellipse(ctx,cx,cy,rx,ry,fill="#fff"){
     ctx.fillStyle=fill;
@@ -275,19 +275,12 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     mm.drawImage(bodySoft,0,0);
     a.globalAlpha=.75*I;a.drawImage(mist,0,0);a.globalAlpha=1;
 
-    // 5. Composite onto untouched photo.
+    // 5. CRITICAL V17 COMPOSITING:
+    // Aura is painted FIRST, then the untouched original photo is painted
+    // completely on top. The body therefore can never be colorized by aura.
     x.clearRect(0,0,w,h);
-    x.drawImage(src,0,0);
     x.drawImage(aura,0,0);
-
-    // Restore original pixels inside the body.
-    const body=document.createElement("canvas");
-    body.width=w;body.height=h;
-    const bc=body.getContext("2d");
-    bc.drawImage(src,0,0);
-    bc.globalCompositeOperation="destination-in";
-    bc.drawImage(mask,0,0);
-    x.drawImage(body,0,0);
+    x.drawImage(src,0,0);
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
 function makeProfile(){
