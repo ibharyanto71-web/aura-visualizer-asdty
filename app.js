@@ -74,9 +74,9 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const c=$("cv"),x=c.getContext("2d"),w=c.width,h=c.height;
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
 
-  // AURA V12 — FULL BODY AURA VISIBLE
-  // V11 was too aggressive with the body occlusion mask. V12 uses a
-  // narrower inner mask so the aura remains visible around the complete body.
+  // AURA V13 — FULL BODY ENVELOPE
+  // Adds explicit head-to-feet aura bands based on the detected full-body bounds,
+  // while keeping the original photo untouched and occluding only the aura layer.
   function ellipse(ctx,cx,cy,rx,ry,fill){
     ctx.fillStyle=fill;
     ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
@@ -105,9 +105,10 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   poses.forEach(p=>{
     const b=bounds(p); if(!b)return;
     const visible=id=>p[id]&&p[id].visibility>.30;
+    const cx=b.cx*w, cy=b.cy*h;
+    const rx=Math.max(48,b.rx*w), ry=Math.max(65,b.ry*h);
 
-    // Narrow inner body mask: used only to keep the strongest glow just outside
-    // the detected body, while allowing the surrounding aura to remain visible.
+    // Inner mask, deliberately narrower than the body so the outer aura remains visible.
     const mask=document.createElement("canvas");
     mask.width=w;mask.height=h;
     const m=mask.getContext("2d");
@@ -125,20 +126,18 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         Math.max(36,(bot-top)*h*.56+R*.55),"#fff");
     }
 
-    const links=[
+    [
       [11,13],[13,15],[12,14],[14,16],
       [11,23],[12,24],[23,24],
       [23,25],[25,27],[24,26],[26,28],
       [27,29],[29,31],[28,30],[30,32]
-    ];
-    links.forEach(([a,d])=>{
+    ].forEach(([a,d])=>{
       if(!visible(a)||!visible(d))return;
       const A=p[a],B=p[d];
       const dist=Math.hypot((B.x-A.x)*w,(B.y-A.y)*h);
       limbMask(m,A,B,Math.max(11,Math.min(34,dist*.22+R*.38)));
     });
 
-    // Soft body edge.
     const soft=document.createElement("canvas");
     soft.width=w;soft.height=h;
     const sm=soft.getContext("2d");
@@ -148,49 +147,62 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     const aura=document.createElement("canvas");
     aura.width=w;aura.height=h;
     const a=aura.getContext("2d");
-    const cx=b.cx*w,cy=b.cy*h,rx=Math.max(48,b.rx*w),ry=Math.max(65,b.ry*h);
 
-    // Strong, continuous outer envelope.
-    cloud(a,cx,cy,rx+R*5.2,ry+R*5.2,[155,55,255],.42*I,30);
-    cloud(a,cx,cy,rx+R*4.0,ry+R*4.0,[40,115,255],.36*I,24);
-    cloud(a,cx,cy,rx+R*2.8,ry+R*2.8,[35,220,160],.30*I,19);
-    cloud(a,cx,cy,Math.max(55,rx*.72)+R*2.0,Math.max(80,ry*.92)+R*2.0,
-      [100,105,255],.25*I,20);
+    // Strong outer envelope.
+    cloud(a,cx,cy,rx+R*5.4,ry+R*5.4,[155,55,255],.38*I,30);
+    cloud(a,cx,cy,rx+R*4.1,ry+R*4.1,[45,120,255],.34*I,24);
+    cloud(a,cx,cy,rx+R*2.9,ry+R*2.9,[35,220,160],.28*I,19);
 
-    // Full-body color progression.
-    if(visible(0)) cloud(a,p[0].x*w,p[0].y*h,R*3.7+46,R*3.7+46,[185,55,255],.42*I,16);
-    if(visible(11)&&visible(12)){
-      const sx=(p[11].x+p[12].x)*w/2,sy=(p[11].y+p[12].y)*h/2;
-      cloud(a,sx,sy,Math.abs(p[11].x-p[12].x)*w+R*3.0+40,R*3.4+40,[45,150,255],.36*I,16);
-    }
+    // Explicit full-body vertical bands. These guarantee aura from head to feet
+    // even when some lower-body landmarks have low confidence.
+    const topY=(b.cy-b.ry)*h;
+    const bodyH=Math.max(100,(b.ry*2)*h);
+    const bandX=cx;
+    const bandW=Math.max(55,rx*.72);
 
+    cloud(a,bandX,topY+bodyH*.16,bandW+R*2.0,bodyH*.19+R*2.2,[185,55,255],.32*I,20);
+    cloud(a,bandX,topY+bodyH*.36,bandW+R*2.3,bodyH*.22+R*2.4,[65,145,255],.30*I,20);
+    cloud(a,bandX,topY+bodyH*.58,bandW+R*2.5,bodyH*.23+R*2.5,[45,220,165],.29*I,20);
+    cloud(a,bandX,topY+bodyH*.80,bandW+R*2.7,bodyH*.21+R*2.7,[255,200,55],.30*I,20);
+    cloud(a,bandX,topY+bodyH*.94,bandW+R*2.9,bodyH*.15+R*2.8,[255,115,70],.32*I,20);
+
+    // Side envelope around the complete silhouette.
+    cloud(a,cx-rx*.72,cy,rx*.42+R*2.3,ry*.82+R*2.3,[80,150,255],.24*I,20);
+    cloud(a,cx+rx*.72,cy,rx*.42+R*2.3,ry*.82+R*2.3,[75,210,170],.24*I,20);
+
+    // Anatomical local colors.
     const local=[
-      [13,[55,145,255],1.15],[14,[55,145,255],1.15],
-      [15,[45,225,175],1.10],[16,[45,225,175],1.10],
-      [23,[55,225,150],1.20],[24,[55,225,150],1.20],
-      [25,[255,205,45],1.15],[26,[255,205,45],1.15],
-      [27,[255,110,65],1.10],[28,[255,110,65],1.10],
-      [31,[255,90,70],1.0],[32,[255,90,70],1.0]
+      [0,[185,55,255],1.1],
+      [11,[60,145,255],1.0],[12,[60,145,255],1.0],
+      [13,[55,150,255],1.05],[14,[55,150,255],1.05],
+      [15,[45,225,175],1.0],[16,[45,225,175],1.0],
+      [23,[55,225,150],1.1],[24,[55,225,150],1.1],
+      [25,[255,205,45],1.05],[26,[255,205,45],1.05],
+      [27,[255,110,65],1.0],[28,[255,110,65],1.0],
+      [31,[255,90,70],.95],[32,[255,90,70],.95]
     ];
     local.forEach(([id,cc,s])=>{
       const q=p[id];if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*3.5*s+46,R*3.6*s+48,cc,.38*I,15);
+      cloud(a,q.x*w,q.y*h,R*3.3*s+44,R*3.4*s+46,cc,.34*I,15);
     });
 
     Z.forEach(([name,id,key])=>{
       const q=p[id];if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*3.5+46,R*3.5+46,C[key],.40*I,14);
+      cloud(a,q.x*w,q.y*h,R*3.4+44,R*3.4+44,C[key],.38*I,14);
     });
 
-    // Remove only the inner body from the aura layer.
-    a.save();a.globalCompositeOperation="destination-out";a.filter="none";a.drawImage(soft,0,0);a.restore();
+    // Remove only the body from aura layer.
+    a.save();
+    a.globalCompositeOperation="destination-out";
+    a.filter="none";
+    a.drawImage(soft,0,0);
+    a.restore();
 
-    // Composite aura onto untouched source photo.
+    // Original photo remains intact.
     x.clearRect(0,0,w,h);
     x.drawImage(src,0,0);
     x.drawImage(aura,0,0);
 
-    // Restore original photo inside body.
     const body=document.createElement("canvas");
     body.width=w;body.height=h;
     const bc=body.getContext("2d");
