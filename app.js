@@ -75,22 +75,20 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA FIELD V3: diffuse light field built from pose joints and limbs.
-  const links=[
-    [11,12],[11,13],[13,15],[12,14],[14,16],
-    [11,23],[12,24],[23,24],[23,25],[25,27],
-    [24,26],[26,28],[27,29],[29,31],[28,30],[30,32]
-  ];
+  // AURA FIELD V4
+  // Deliberately NO lines, polygons, hulls, or joint-to-joint strokes.
+  // The aura is built only from diffuse radial fields so it reads as a soft
+  // luminous atmosphere around the detected person.
 
-  function glowDot(px,py,r,cc,alpha){
-    const g=x.createRadialGradient(px,py,0,px,py,r);
-    g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.20,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.72})`);
-    g.addColorStop(.48,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
-    g.addColorStop(.76,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.08})`);
-    g.addColorStop(1,"rgba(255,255,255,0)");
+  function field(cx,cy,rx,ry,stops,alpha=1){
+    x.save();
+    x.globalCompositeOperation="screen";
+    x.filter=`blur(${Math.max(3,R*.20)}px)`;
+    const g=x.createRadialGradient(cx,cy,Math.min(rx,ry)*.08,cx,cy,Math.max(rx,ry));
+    for(const s of stops) g.addColorStop(s[0],`rgba(${s[1][0]},${s[1][1]},${s[1][2]},${s[2]*alpha})`);
     x.fillStyle=g;
-    x.beginPath();x.arc(px,py,r,0,Math.PI*2);x.fill();
+    x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);x.fill();
+    x.restore();
   }
 
   poses.forEach((p,pi)=>{
@@ -100,61 +98,62 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     const b=bounds(p);
     if(b){
       const cx=b.cx*w,cy=b.cy*h;
-      const rx=Math.max(35,b.rx*w),ry=Math.max(45,b.ry*h);
+      const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
 
-      // Broad whole-body aura: soft and transparent, no geometric boundary.
-      x.save();
-      x.globalCompositeOperation="screen";
-      x.filter=`blur(${Math.max(5,R*.18)}px)`;
-      const g=x.createRadialGradient(cx,cy,Math.min(rx,ry)*.18,cx,cy,Math.max(rx,ry)+R*2.8);
-      g.addColorStop(0,`rgba(150,90,255,${.14*I})`);
-      g.addColorStop(.25,`rgba(75,155,255,${.13*I})`);
-      g.addColorStop(.48,`rgba(65,225,165,${.105*I})`);
-      g.addColorStop(.68,`rgba(255,205,65,${.065*I})`);
-      g.addColorStop(.86,`rgba(255,120,85,${.025*I})`);
-      g.addColorStop(1,"rgba(255,255,255,0)");
-      x.fillStyle=g;
-      x.beginPath();x.ellipse(cx,cy,rx+R*2.1,ry+R*2.1,0,0,Math.PI*2);x.fill();
-      x.restore();
+      // Large outer atmospheric field.
+      field(cx,cy,rx+R*3.0,ry+R*3.0,[
+        [0,[170,95,255],.11*I],
+        [.24,[80,165,255],.10*I],
+        [.48,[65,225,165],.075*I],
+        [.68,[255,205,70],.045*I],
+        [.84,[255,125,90],.018*I],
+        [1,[255,255,255],0]
+      ]);
+
+      // A second, slightly tighter field creates depth without an edge.
+      field(cx,cy,rx+R*1.65,ry+R*1.65,[
+        [0,[185,100,255],.075*I],
+        [.30,[75,175,255],.075*I],
+        [.60,[75,230,155],.050*I],
+        [.82,[255,210,80],.022*I],
+        [1,[255,255,255],0]
+      ]);
     }
 
-    // Soft light follows the detected limbs.
+    // Diffuse clouds at pose landmarks. No strokes between them.
     x.save();
     x.globalCompositeOperation="screen";
-    x.lineCap="round";
-    x.lineJoin="round";
-    x.filter=`blur(${Math.max(7,R*.25)}px)`;
-    links.forEach(([a,b],i)=>{
-      const A=p[a],B=p[b];
-      if(!A||!B||A.visibility<.30||B.visibility<.30)return;
-      const cc=C[keys[(i+pi)%keys.length]];
-      x.strokeStyle=`rgba(${cc[0]},${cc[1]},${cc[2]},${.15*I})`;
-      x.lineWidth=Math.max(14,R*.62);
-      x.beginPath();x.moveTo(A.x*w,A.y*h);x.lineTo(B.x*w,B.y*h);x.stroke();
-    });
-    x.restore();
-
-    // Large diffuse clouds around joints, avoiding the old small-dot look.
-    x.save();
-    x.globalCompositeOperation="screen";
-    x.filter=`blur(${Math.max(2,R*.10)}px)`;
+    x.filter=`blur(${Math.max(4,R*.12)}px)`;
     p.forEach((q,i)=>{
       if(!q||q.visibility<.30)return;
       const cc=C[keys[(i+pi)%keys.length]];
-      const rr=Math.max(20,R*(.65+(i%3)*.12)+18);
-      glowDot(q.x*w,q.y*h,rr,cc,.18*I);
+      const rr=Math.max(24,R*(.72+(i%3)*.12)+20);
+      const g=x.createRadialGradient(q.x*w,q.y*h,0,q.x*w,q.y*h,rr);
+      g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${.20*I})`);
+      g.addColorStop(.28,`rgba(${cc[0]},${cc[1]},${cc[2]},${.105*I})`);
+      g.addColorStop(.68,`rgba(${cc[0]},${cc[1]},${cc[2]},${.025*I})`);
+      g.addColorStop(1,"rgba(255,255,255,0)");
+      x.fillStyle=g;x.beginPath();x.arc(q.x*w,q.y*h,rr,0,Math.PI*2);x.fill();
     });
     x.restore();
 
-    // Analytical zone clouds.
+    // Larger zone fields: these are the analytical color anchors.
     Z.forEach(([name,id,key])=>{
       const q=p[id];
       if(!q||q.visibility<.35)return;
-      const px=q.x*w,py=q.y*h,r=Math.max(28,R*1.15+22),cc=C[key];
+      const px=q.x*w,py=q.y*h;
+      const r=Math.max(42,R*1.55+26),cc=C[key];
+
       x.save();
       x.globalCompositeOperation="screen";
-      x.filter=`blur(${Math.max(2,R*.07)}px)`;
-      glowDot(px,py,r*2.15,cc,.34*I);
+      x.filter=`blur(${Math.max(4,R*.10)}px)`;
+      const g=x.createRadialGradient(px,py,0,px,py,r*2.5);
+      g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${.30*I})`);
+      g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${.17*I})`);
+      g.addColorStop(.52,`rgba(${cc[0]},${cc[1]},${cc[2]},${.065*I})`);
+      g.addColorStop(.80,`rgba(${cc[0]},${cc[1]},${cc[2]},${.015*I})`);
+      g.addColorStop(1,"rgba(255,255,255,0)");
+      x.fillStyle=g;x.beginPath();x.arc(px,py,r*2.5,0,Math.PI*2);x.fill();
       x.restore();
     });
   });
