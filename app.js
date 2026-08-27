@@ -1,4 +1,4 @@
-const $=x=>document.getElementById(x);let stream=null,src=null,det=null,segMask=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
+const $=x=>document.getElementById(x);let stream=null,src=null,det=null,selfieSeg=null,segMask=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
   const status=$("status");
   status.textContent="⏳ Memuat library AI…";
 
@@ -35,8 +35,7 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,segMask=
           runningMode:"IMAGE",numPoses:3,
           minPoseDetectionConfidence:.45,
           minPosePresenceConfidence:.45,
-          minTrackingConfidence:.45,
-          outputSegmentationMasks:true
+          minTrackingConfidence:.45
         });
       }catch(gpuError){
         console.warn("AURA GPU gagal, fallback CPU:",gpuError);
@@ -46,12 +45,24 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,segMask=
           runningMode:"IMAGE",numPoses:3,
           minPoseDetectionConfidence:.45,
           minPosePresenceConfidence:.45,
-          minTrackingConfidence:.45,
-          outputSegmentationMasks:true
+          minTrackingConfidence:.45
         });
       }
 
-      status.textContent="✓ AI siap • profil zona tubuh aktif";
+      // V24: use the legacy MediaPipe Selfie Segmentation runtime for the
+      // actual person mask. It returns a ready segmentationMask canvas and
+      // avoids the Tasks-Vision MPMask buffer/WebGL ambiguity encountered in
+      // V18-V23.
+      if(!window.SelfieSegmentation) throw new Error("Selfie Segmentation library tidak termuat");
+      selfieSeg=new SelfieSegmentation({
+        locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+      });
+      selfieSeg.setOptions({modelSelection:1});
+      selfieSeg.onResults((results)=>{
+        window.__auraSegmentationResults=results;
+      });
+
+      status.textContent="✓ AI siap • pose + siluet tubuh aktif";
       return;
     }catch(e){
       lastError=e;
@@ -73,109 +84,85 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,segMask=
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=$("installBox");if(b)b.classList.remove("hidden");});
 const ib=$("installBox");if(ib)ib.onclick=async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;ib.classList.add("hidden")};
 window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$("cam").onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia pada browser/context ini");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});$("video").srcObject=stream;$("camera").classList.remove("hidden");$("work").classList.add("hidden")}catch(e){alert("Izin kamera diperlukan.")}};$("close").onclick=stop;function stop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("camera").classList.add("hidden")}$("shot").onclick=()=>{let c=document.createElement("canvas");c.width=$("video").videoWidth;c.height=$("video").videoHeight;c.getContext("2d").drawImage($("video"),0,0);stop();prep(c)};$("gal").onclick=()=>{const f=$("file");f.value="";f.click()};$("file").onchange=()=>{let f=$("file").files[0];if(!f)return;let im=new Image();im.onload=()=>{let c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);prep(c)};im.src=URL.createObjectURL(f)};function prep(c){let s=Math.min(1,1400/c.width);src=document.createElement("canvas");src.width=c.width*s;src.height=c.height*s;src.getContext("2d").drawImage(c,0,0,src.width,src.height);poses=[];$("work").classList.remove("hidden");$("profile").innerHTML="";$("label").textContent="SIAP";base()}function base(){let c=$("cv"),x=c.getContext("2d");c.width=src.width;c.height=src.height;x.drawImage(src,0,0)}$("scan").onclick=()=>{
-  if(!det)return alert("Model AI belum siap.");
+  if(!det||!selfieSeg)return alert("Model AI belum siap.");
   $("work").classList.add("scanning");
   $("label").textContent="MEMBUAT SILUET TUBUH…";
-  $("status").textContent="⏳ AI sedang membuat segmentation mask dari pose…";
+  $("status").textContent="⏳ AI sedang memisahkan tubuh dari background…";
   $("scan").disabled=true;
+
+  const runSeg=()=>new Promise(async(resolve,reject)=>{
+    let timer=null;
+    const previous=window.__auraSegmentationResults;
+    window.__auraSegmentationResults=null;
+    const finish=()=>{
+      if(timer)clearTimeout(timer);
+      const r=window.__auraSegmentationResults;
+      if(!r?.segmentationMask){
+        reject(new Error("Selfie Segmentation tidak menghasilkan mask"));
+        return;
+      }
+      resolve(r.segmentationMask);
+    };
+    timer=setTimeout(()=>reject(new Error("Selfie Segmentation timeout")),15000);
+    // onResults is set above; poll only for this one image.
+    try{
+      await selfieSeg.send({image:src});
+      finish();
+    }catch(e){
+      if(timer)clearTimeout(timer);
+      reject(e);
+    }
+  });
+
   setTimeout(async()=>{
     try{
-      const result=det.detect(src);
-      poses=result.landmarks||[];
-      segMask=null;
+      const poseResult=det.detect(src);
+      poses=poseResult.landmarks||[];
 
-      // Pose Landmarker can return a per-pixel person likelihood mask.
-      // This is exactly the mask we need for the aura silhouette.
-      if(result.segmentationMasks && result.segmentationMasks.length){
-        const mask=result.segmentationMasks[0];
-        const mw=mask.width,mh=mask.height;
-        let data=null;
+      const maskCanvas=await runSeg();
+      const mw=maskCanvas.width||src.width,mh=maskCanvas.height||src.height;
+      const tc=document.createElement("canvas");
+      tc.width=mw;tc.height=mh;
+      const tx=tc.getContext("2d",{willReadFrequently:true});
+      tx.drawImage(maskCanvas,0,0,mw,mh);
+      const px=tx.getImageData(0,0,mw,mh).data;
+      const arr=new Float32Array(mw*mh);
 
-        // V23: MPMask.getAsFloat32Array() is documented as single-channel,
-        // but the browser build in V22 returned a buffer whose length did not
-        // match width*height. Read the rendered MPMask.canvas instead. This
-        // guarantees one RGBA pixel per mask pixel and avoids stride ambiguity.
-        try{
-          const mc=mask.canvas;
-          if(mc){
-            const tc=document.createElement("canvas");
-            tc.width=mw;tc.height=mh;
-            const tx=tc.getContext("2d",{willReadFrequently:true});
-            tx.drawImage(mc,0,0,mw,mh);
-            const px=tx.getImageData(0,0,mw,mh).data;
-
-            // Pick the channel with the strongest mask-like variation.
-            const stats=[];
-            for(let ch=0;ch<4;ch++){
-              let min=255,max=0,sum=0,sum2=0;
-              for(let i=ch;i<px.length;i+=4){
-                const v=px[i];
-                if(v<min)min=v;
-                if(v>max)max=v;
-                sum+=v;sum2+=v*v;
-              }
-              const n=mw*mh;
-              const mean=sum/n;
-              const variance=Math.max(0,sum2/n-mean*mean);
-              stats.push({ch,min,max,variance});
-            }
-            stats.sort((a,b)=>b.variance-a.variance);
-            const chosen=stats[0].ch;
-            const arr=new Float32Array(mw*mh);
-            let peak=0,count=0;
-            for(let i=0,p=chosen;i<arr.length;i++,p+=4){
-              const v=px[p]/255;
-              arr[i]=v;
-              if(v>peak)peak=v;
-              if(v>.20)count++;
-            }
-            console.log("AURA V23 mask canvas:",{
-              width:mw,height:mh,
-              channels:stats,
-              chosenChannel:chosen,
-              peak,
-              coveredPixels:count,
-              totalPixels:mw*mh
-            });
-            if(peak>.05 && count>100){
-              data=arr;
-            }
-          }
-        }catch(maskCanvasError){
-          console.warn("V23 MPMask.canvas read failed, using array fallback:",maskCanvasError);
+      // Selfie Segmentation encodes the person mask in the rendered canvas.
+      // Select the most informative channel automatically.
+      const scores=[];
+      for(let ch=0;ch<4;ch++){
+        let min=255,max=0,sum=0,sum2=0;
+        for(let i=ch;i<px.length;i+=4){
+          const v=px[i];
+          if(v<min)min=v;if(v>max)max=v;
+          sum+=v;sum2+=v*v;
         }
-
-        // Fallback: account for possible multi-channel/padded buffers.
-        if(!data){
-          const raw=mask.getAsFloat32Array();
-          const pixels=mw*mh;
-          const stride=Math.max(1,Math.floor(raw.length/pixels));
-          const arr=new Float32Array(pixels);
-          let peak=0,count=0;
-          for(let i=0;i<pixels;i++){
-            let v=raw[i*stride];
-            if(!Number.isFinite(v))v=0;
-            v=Math.max(0,Math.min(1,v));
-            arr[i]=v;
-            if(v>peak)peak=v;
-            if(v>.20)count++;
-          }
-          console.log("AURA V23 array fallback:",{
-            width:mw,height:mh,rawLength:raw.length,stride,peak,
-            coveredPixels:count,totalPixels:pixels
-          });
-          if(peak>.05 && count>100)data=arr;
-        }
-
-        if(data){
-          segMask={w:mw,h:mh,data,category:false};
-        }
-        mask.close();
+        const n=mw*mh,mean=sum/n;
+        scores.push({ch,min,max,var:Math.max(0,sum2/n-mean*mean)});
       }
+      scores.sort((a,b)=>b.var-a.var);
 
-      if(!segMask){
-        throw new Error("Pose segmentation mask tidak tersedia / kosong");
+      // Prefer alpha if it contains meaningful coverage; otherwise use the
+      // highest-variance channel.
+      let chosen=scores[0].ch;
+      const alphaStats=scores.find(s=>s.ch===3);
+      if(alphaStats && alphaStats.max>8 && alphaStats.var>5) chosen=3;
+
+      let peak=0,covered=0;
+      for(let i=0,p=chosen;i<arr.length;i++,p+=4){
+        const v=px[p]/255;
+        arr[i]=v;
+        if(v>peak)peak=v;
+        if(v>.20)covered++;
       }
+      console.log("AURA V24 selfie mask:",{
+        width:mw,height:mh,chosenChannel:chosen,
+        channels:scores,peak,coveredPixels:covered,totalPixels:mw*mh
+      });
+
+      if(peak<=.05 || covered<100) throw new Error("Siluet tubuh kosong");
+      segMask={w:mw,h:mh,data:arr,category:false};
 
       paint();
       profile();
@@ -191,7 +178,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA V23 SCAN ERROR:",e);
+      console.error("AURA V24 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
       $("status").textContent="Siluet belum tersedia. Lihat Console.";
     }finally{
@@ -228,12 +215,20 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
     const sy=Math.min(mh-1,Math.floor(y*mh/h));
     for(let xx=0;xx<w;xx++){
       const sx=Math.min(mw-1,Math.floor(xx*mw/w));
-      const raw=md[sy*mw+sx];
-      const v=segMask.category ? raw/255 : raw;
-      const a=segMask.category ? raw : Math.round(Math.max(0,Math.min(1,v))*255);
+      let v=0;
+      // 2x2 max-pool during upsampling preserves thin silhouette regions.
+      for(let oy=0;oy<=1;oy++){
+        for(let ox=0;ox<=1;ox++){
+          const yy=Math.min(mh-1,sy+oy),xx2=Math.min(mw-1,sx+ox);
+          const raw=md[yy*mw+xx2];
+          const vv=segMask.category ? raw/255 : raw;
+          if(vv>v)v=vv;
+        }
+      }
+      const a=Math.round(Math.max(0,Math.min(1,v))*255);
       const i=(y*w+xx)*4;
       d[i]=255;d[i+1]=255;d[i+2]=255;
-      d[i+3]=v>.34?a:0;
+      d[i+3]=v>.20?a:0;
     }
   }
   m.putImageData(img,0,0);
