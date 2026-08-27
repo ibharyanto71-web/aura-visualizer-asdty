@@ -75,60 +75,115 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA V6: visible soft field.
-  // IMPORTANT: use source-over, not screen, because screen over a white
-  // photographic background can wash the aura out completely.
+  // AURA V7 — BODY FOLLOWING AURA
+  // Diffuse backlight clouds are placed around anatomical regions so the
+  // aura follows the detected body without drawing outlines or landmark lines.
   function cloud(cx,cy,rx,ry,cc,alpha,blur){
     x.save();
     x.globalCompositeOperation="source-over";
     x.filter=`blur(${blur}px)`;
     const g=x.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
     g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.72})`);
-    g.addColorStop(.48,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.32})`);
-    g.addColorStop(.72,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.10})`);
+    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.70})`);
+    g.addColorStop(.48,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
+    g.addColorStop(.76,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.075})`);
     g.addColorStop(1,"rgba(255,255,255,0)");
     x.fillStyle=g;
     x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);x.fill();
     x.restore();
   }
 
+  function joint(id){
+    const q=poses[0]?.[id];
+    return q&&q.visibility>.35 ? q : null;
+  }
+
   poses.forEach((p,pi)=>{
     const b=bounds(p);
     if(!b)return;
 
-    const cx=b.cx*w,cy=b.cy*h;
-    const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
+    const sx=q=>q.x*w, sy=q=>q.y*h;
 
-    // Three unmistakable outer aura layers.
-    cloud(cx,cy,rx+R*3.8,ry+R*3.8,[155,70,255],.25*I,28);
-    cloud(cx,cy,rx+R*2.7,ry+R*2.7,[45,145,255],.22*I,22);
-    cloud(cx,cy,rx+R*1.8,ry+R*1.8,[45,215,145],.18*I,18);
+    // Base field keeps the aura continuous.
+    cloud(
+      b.cx*w,b.cy*h,
+      Math.max(42,b.rx*w)+R*2.0,
+      Math.max(55,b.ry*h)+R*2.0,
+      [105,120,245],.055*I,24
+    );
 
-    // Side clouds make the field visibly extend beyond shoulders, arms and legs.
-    const side=[
-      [11,[90,155,255],1.2],[12,[90,155,255],1.2],
-      [15,[65,170,255],1.0],[16,[70,225,145],1.0],
-      [23,[70,225,145],1.25],[24,[70,225,145],1.25],
-      [27,[255,190,55],1.15],[28,[255,190,55],1.15]
-    ];
-    for(const [id,cc,s] of side){
-      const q=p[id];
-      if(!q||q.visibility<.35)continue;
-      cloud(q.x*w,q.y*h,R*2.9*s+34,R*3.4*s+38,cc,.20*I,18);
+    // Head / neck: compact halo.
+    if(p[0]&&p[0].visibility>.35)
+      cloud(sx(p[0]),sy(p[0]),R*2.8+30,R*2.8+30,[180,75,255],.25*I,17);
+
+    if(p[11]&&p[12]&&p[11].visibility>.35&&p[12].visibility>.35){
+      const cx=(p[11].x+p[12].x)*w/2, cy=(p[11].y+p[12].y)*h/2;
+      const rx=Math.abs(p[11].x-p[12].x)*w*.9+R*1.8+28;
+      cloud(cx,cy,Math.max(38,rx),R*2.1+30,[80,155,255],.20*I,18);
     }
 
-    // Head field.
-    const head=p[0];
-    if(head&&head.visibility>.30)
-      cloud(head.x*w,head.y*h,R*3.7+42,R*3.3+38,[180,75,255],.28*I,20);
+    // Torso field, vertically oriented.
+    if(p[11]&&p[12]&&p[23]&&p[24]){
+      const top=(p[11].y+p[12].y)/2;
+      const bot=(p[23].y+p[24].y)/2;
+      const left=Math.min(p[11].x,p[12].x,p[23].x,p[24].x);
+      const right=Math.max(p[11].x,p[12].x,p[23].x,p[24].x);
+      cloud(
+        ((left+right)/2)*w,
+        ((top+bot)/2)*h,
+        Math.max(42,(right-left)*w*.95)+R*1.7,
+        Math.max(65,(bot-top)*h*.65)+R*1.7,
+        [65,210,165],.13*I,22
+      );
+    }
 
-    // Zone-specific analytical clouds.
+    // Arms and legs: soft clouds at joints, not lines.
+    const limbs=[
+      [13,[65,165,255],1.0],[14,[65,165,255],1.0],
+      [15,[60,200,175],.92],[16,[60,200,175],.92],
+      [23,[70,220,155],1.05],[24,[70,220,155],1.05],
+      [25,[255,205,65],1.0],[26,[255,205,65],1.0],
+      [27,[255,125,90],.95],[28,[255,125,90],.95]
+    ];
+    limbs.forEach(([id,cc,s])=>{
+      const q=p[id];
+      if(!q||q.visibility<.35)return;
+      cloud(
+        sx(q),sy(q),
+        R*2.0*s+26,R*2.35*s+30,
+        cc,.16*I,15
+      );
+    });
+
+    // Additional soft fields between anatomical midpoints create continuity
+    // while remaining completely line-free.
+    const pairs=[
+      [11,13,[70,155,255]],[13,15,[65,195,185]],
+      [12,14,[70,155,255]],[14,16,[65,195,185]],
+      [23,25,[100,215,150]],[25,27,[255,180,70]],
+      [24,26,[100,215,150]],[26,28,[255,180,70]]
+    ];
+    pairs.forEach(([a,d,cc])=>{
+      const A=p[a],B=p[d];
+      if(!A||!B||A.visibility<.35||B.visibility<.35)return;
+      cloud(
+        ((A.x+B.x)/2)*w,((A.y+B.y)/2)*h,
+        Math.abs(A.x-B.x)*w*.65+R*1.5+22,
+        Math.abs(A.y-B.y)*h*.65+R*1.5+24,
+        cc,.095*I,17
+      );
+    });
+
+    // Analytical zone aura remains the strongest local color.
     Z.forEach(([name,id,key])=>{
       const q=p[id];
       if(!q||q.visibility<.35)return;
       const cc=C[key];
-      cloud(q.x*w,q.y*h,R*3.4+42,R*3.4+42,cc,.25*I,16);
+      cloud(
+        sx(q),sy(q),
+        R*2.7+38,R*2.9+40,
+        cc,.22*I,14
+      );
     });
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
