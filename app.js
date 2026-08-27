@@ -75,9 +75,15 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA V9 — BODY SILHOUETTE AURA / FIXED COMPOSITING
-  // IMPORTANT: the silhouette mask is applied ONLY to the offscreen aura layer.
-  // The original photo canvas is never erased.
+  // AURA V10 — SILHOUETTE OCCLUSION, ROBUST COMPOSITING
+  // Strategy:
+  // 1. Build an approximate body mask offscreen.
+  // 2. Build aura offscreen.
+  // 3. Remove the body area from the aura offscreen.
+  // 4. Draw aura over the photo.
+  // 5. Redraw the original photo only inside the body mask.
+  // The main photo is never erased.
+
   function ellipse(ctx,cx,cy,rx,ry,fill){
     ctx.fillStyle=fill;
     ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
@@ -85,8 +91,8 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
 
   function limbMask(ctx,A,B,thickness){
     const ax=A.x*w,ay=A.y*h,bx=B.x*w,by=B.y*h;
-    const dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy)||1;
-    const ang=Math.atan2(dy,dx);
+    const len=Math.hypot(bx-ax,by-ay)||1;
+    const ang=Math.atan2(by-ay,bx-ax);
     ctx.save();
     ctx.translate((ax+bx)/2,(ay+by)/2);
     ctx.rotate(ang);
@@ -112,19 +118,18 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   poses.forEach((p,pi)=>{
     const b=bounds(p);
     if(!b)return;
+    const visible=id=>p[id]&&p[id].visibility>.30;
 
-    // 1) Build an approximate body silhouette in an offscreen mask.
+    // BODY MASK
     const mask=document.createElement("canvas");
     mask.width=w;mask.height=h;
     const m=mask.getContext("2d");
     m.clearRect(0,0,w,h);
-    m.fillStyle="rgba(255,255,255,1)";
-
-    const visible=id=>p[id]&&p[id].visibility>.30;
+    m.fillStyle="#fff";
 
     if(visible(0)){
-      ellipse(m,p[0].x*w,p[0].y*h,Math.max(24,R*1.45+12),
-              Math.max(27,R*1.55+12),"rgba(255,255,255,1)");
+      ellipse(m,p[0].x*w,p[0].y*h,
+        Math.max(24,R*1.45+12),Math.max(27,R*1.55+12),"#fff");
     }
 
     if(visible(11)&&visible(12)&&visible(23)&&visible(24)){
@@ -133,8 +138,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       const right=Math.max(p[11].x,p[12].x,p[23].x,p[24].x);
       ellipse(m,((left+right)/2)*w,((top+bot)/2)*h,
         Math.max(28,(right-left)*w*.72+R*.65),
-        Math.max(42,(bot-top)*h*.62+R*.75),
-        "rgba(255,255,255,1)");
+        Math.max(42,(bot-top)*h*.62+R*.75),"#fff");
     }
 
     const links=[
@@ -143,7 +147,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       [23,25],[25,27],[24,26],[26,28],
       [27,29],[29,31],[28,30],[30,32]
     ];
-    m.save();m.fillStyle="rgba(255,255,255,1)";
+    m.save();
     links.forEach(([a,d])=>{
       if(!visible(a)||!visible(d))return;
       const A=p[a],B=p[d];
@@ -152,55 +156,64 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     });
     m.restore();
 
-    // Feather mask.
+    // Feathered mask for a softer body boundary.
     const soft=document.createElement("canvas");
     soft.width=w;soft.height=h;
     const sm=soft.getContext("2d");
     sm.filter=`blur(${Math.max(5,R*.55)}px)`;
     sm.drawImage(mask,0,0);
 
-    // 2) Draw ALL aura into a separate offscreen layer.
+    // AURA OFFSCREEN
     const aura=document.createElement("canvas");
     aura.width=w;aura.height=h;
     const a=aura.getContext("2d");
     const cx=b.cx*w,cy=b.cy*h;
     const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
 
-    cloud(a,cx,cy,rx+R*3.4,ry+R*3.4,[150,75,255],.19*I,24);
-    cloud(a,cx,cy,rx+R*2.45,ry+R*2.45,[55,150,255],.16*I,20);
-    cloud(a,cx,cy,rx+R*1.65,ry+R*1.65,[60,215,155],.12*I,17);
+    cloud(a,cx,cy,rx+R*3.4,ry+R*3.4,[150,75,255],.20*I,24);
+    cloud(a,cx,cy,rx+R*2.45,ry+R*2.45,[55,150,255],.17*I,20);
+    cloud(a,cx,cy,rx+R*1.65,ry+R*1.65,[60,215,155],.13*I,17);
 
-    // Anatomical color clouds.
     const local=[
       [0,[180,75,255],1.15],[11,[75,155,255],1.0],[12,[75,155,255],1.0],
       [23,[70,220,155],1.1],[24,[70,220,155],1.1],
       [27,[255,190,60],1.0],[28,[255,190,60],1.0]
     ];
     local.forEach(([id,cc,s])=>{
-      const q=p[id];
-      if(!q||q.visibility<.35)return;
+      const q=p[id]; if(!q||q.visibility<.35)return;
       cloud(a,q.x*w,q.y*h,R*2.7*s+34,R*2.9*s+36,cc,.18*I,16);
     });
 
-    // Stronger analytical zone fields.
     Z.forEach(([name,id,key])=>{
-      const q=p[id];
-      if(!q||q.visibility<.35)return;
+      const q=p[id]; if(!q||q.visibility<.35)return;
       cloud(a,q.x*w,q.y*h,R*2.8+38,R*2.8+38,C[key],.20*I,15);
     });
 
-    // 3) Remove aura ONLY inside the silhouette on the offscreen aura.
+    // Cut body out of AURA ONLY.
     a.save();
     a.globalCompositeOperation="destination-out";
     a.filter="none";
     a.drawImage(soft,0,0);
     a.restore();
 
-    // 4) Composite the resulting aura over the untouched photo.
-    x.save();
-    x.globalCompositeOperation="source-over";
+    // Restore base photo first, then aura.
+    x.clearRect(0,0,w,h);
+    x.drawImage(src,0,0);
     x.drawImage(aura,0,0);
-    x.restore();
+
+    // Restore the ORIGINAL photo only inside the body mask.
+    // This prevents any aura from tinting/covering the subject.
+    const body=document.createElement("canvas");
+    body.width=w;body.height=h;
+    const bc=body.getContext("2d");
+    bc.drawImage(src,0,0);
+    bc.save();
+    bc.globalCompositeOperation="destination-in";
+    bc.filter="none";
+    bc.drawImage(mask,0,0);
+    bc.restore();
+
+    x.drawImage(body,0,0);
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
 function makeProfile(){
