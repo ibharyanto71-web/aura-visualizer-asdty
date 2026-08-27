@@ -75,86 +75,67 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA FIELD V4
-  // Deliberately NO lines, polygons, hulls, or joint-to-joint strokes.
-  // The aura is built only from diffuse radial fields so it reads as a soft
-  // luminous atmosphere around the detected person.
+  // AURA CLOUD BACKLIGHT V5
+  // Aura is rendered as broad, soft clouds behind the subject.
+  // No polygon, contour, or joint-to-joint lines are drawn.
 
-  function field(cx,cy,rx,ry,stops,alpha=1){
+  function cloud(cx,cy,rx,ry,cc,alpha,blur=18){
     x.save();
     x.globalCompositeOperation="screen";
-    x.filter=`blur(${Math.max(3,R*.20)}px)`;
-    const g=x.createRadialGradient(cx,cy,Math.min(rx,ry)*.08,cx,cy,Math.max(rx,ry));
-    for(const s of stops) g.addColorStop(s[0],`rgba(${s[1][0]},${s[1][1]},${s[1][2]},${s[2]*alpha})`);
+    x.filter=`blur(${blur}px)`;
+    const g=x.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
+    g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
+    g.addColorStop(.24,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.72})`);
+    g.addColorStop(.52,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
+    g.addColorStop(.78,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.08})`);
+    g.addColorStop(1,"rgba(255,255,255,0)");
     x.fillStyle=g;
-    x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);x.fill();
+    x.beginPath();
+    x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    x.fill();
     x.restore();
   }
 
   poses.forEach((p,pi)=>{
-    const vis=p.filter(q=>q&&q.visibility>.30);
-    if(vis.length<3)return;
-
     const b=bounds(p);
-    if(b){
-      const cx=b.cx*w,cy=b.cy*h;
-      const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
+    if(!b)return;
 
-      // Large outer atmospheric field.
-      field(cx,cy,rx+R*3.0,ry+R*3.0,[
-        [0,[170,95,255],.11*I],
-        [.24,[80,165,255],.10*I],
-        [.48,[65,225,165],.075*I],
-        [.68,[255,205,70],.045*I],
-        [.84,[255,125,90],.018*I],
-        [1,[255,255,255],0]
-      ]);
+    const cx=b.cx*w,cy=b.cy*h;
+    const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
 
-      // A second, slightly tighter field creates depth without an edge.
-      field(cx,cy,rx+R*1.65,ry+R*1.65,[
-        [0,[185,100,255],.075*I],
-        [.30,[75,175,255],.075*I],
-        [.60,[75,230,155],.050*I],
-        [.82,[255,210,80],.022*I],
-        [1,[255,255,255],0]
-      ]);
+    // Broad backlight: extends well outside the person.
+    cloud(cx,cy,rx+R*3.5,ry+R*3.5,[155,85,255],.10*I,26);
+    cloud(cx,cy-R*.15,rx+R*2.5,ry+R*2.5,[65,160,255],.085*I,22);
+    cloud(cx,cy+R*.35,rx+R*1.9,ry+R*2.0,[60,225,155],.065*I,20);
+
+    // Shoulder / head cloud.
+    if(p[0] && p[0].visibility>.30)
+      cloud(p[0].x*w,p[0].y*h,R*3.4,R*3.0,[175,90,255],.12*I,24);
+
+    // Large soft clouds at selected anatomical anchors.
+    const anchors=[
+      [11,[110,155,255],1.20],[12,[110,155,255],1.20],
+      [23,[75,220,160],1.30],[24,[75,220,160],1.30],
+      [25,[255,205,70],1.15],[26,[255,205,70],1.15],
+      [27,[255,125,90],1.05],[28,[255,125,90],1.05]
+    ];
+
+    for(const [id,cc,scale] of anchors){
+      const q=p[id];
+      if(!q||q.visibility<.35)continue;
+      cloud(
+        q.x*w,q.y*h,
+        R*2.5*scale+28,R*2.8*scale+30,
+        cc,.105*I,18
+      );
     }
 
-    // Diffuse clouds at pose landmarks. No strokes between them.
-    x.save();
-    x.globalCompositeOperation="screen";
-    x.filter=`blur(${Math.max(4,R*.12)}px)`;
-    p.forEach((q,i)=>{
-      if(!q||q.visibility<.30)return;
-      const cc=C[keys[(i+pi)%keys.length]];
-      const rr=Math.max(24,R*(.72+(i%3)*.12)+20);
-      const g=x.createRadialGradient(q.x*w,q.y*h,0,q.x*w,q.y*h,rr);
-      g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${.20*I})`);
-      g.addColorStop(.28,`rgba(${cc[0]},${cc[1]},${cc[2]},${.105*I})`);
-      g.addColorStop(.68,`rgba(${cc[0]},${cc[1]},${cc[2]},${.025*I})`);
-      g.addColorStop(1,"rgba(255,255,255,0)");
-      x.fillStyle=g;x.beginPath();x.arc(q.x*w,q.y*h,rr,0,Math.PI*2);x.fill();
-    });
-    x.restore();
-
-    // Larger zone fields: these are the analytical color anchors.
+    // Analytical zone clouds.
     Z.forEach(([name,id,key])=>{
       const q=p[id];
       if(!q||q.visibility<.35)return;
-      const px=q.x*w,py=q.y*h;
-      const r=Math.max(42,R*1.55+26),cc=C[key];
-
-      x.save();
-      x.globalCompositeOperation="screen";
-      x.filter=`blur(${Math.max(4,R*.10)}px)`;
-      const g=x.createRadialGradient(px,py,0,px,py,r*2.5);
-      g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${.30*I})`);
-      g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${.17*I})`);
-      g.addColorStop(.52,`rgba(${cc[0]},${cc[1]},${cc[2]},${.065*I})`);
-      g.addColorStop(.80,`rgba(${cc[0]},${cc[1]},${cc[2]},${.015*I})`);
-      g.addColorStop(1,"rgba(255,255,255,0)");
-      x.fillStyle=g;x.beginPath();x.arc(px,py,r*2.5,0,Math.PI*2);x.fill();
-      x.restore();
+      const cc=C[key];
+      cloud(q.x*w,q.y*h,R*3.0+34,R*3.0+34,cc,.16*I,16);
     });
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
