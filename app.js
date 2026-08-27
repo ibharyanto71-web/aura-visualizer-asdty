@@ -5,13 +5,13 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[]
   const loaders=[
     {
       name:"jsDelivr",
-      module:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs",
-      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+      module:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304",
+      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
     },
     {
       name:"esm.sh",
-      module:"https://esm.sh/@mediapipe/tasks-vision@0.10.22",
-      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+      module:"https://unpkg.com/@mediapipe/tasks-vision@0.10.22-rc.20250304",
+      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
     }
   ];
 
