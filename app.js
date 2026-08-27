@@ -89,14 +89,85 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       if(result.segmentationMasks && result.segmentationMasks.length){
         const mask=result.segmentationMasks[0];
         const mw=mask.width,mh=mask.height;
-        const data=mask.getAsFloat32Array();
-        let peak=0,count=0;
-        for(let i=0;i<data.length;i++){
-          if(data[i]>peak)peak=data[i];
-          if(data[i]>.25)count++;
+        let data=null;
+
+        // V23: MPMask.getAsFloat32Array() is documented as single-channel,
+        // but the browser build in V22 returned a buffer whose length did not
+        // match width*height. Read the rendered MPMask.canvas instead. This
+        // guarantees one RGBA pixel per mask pixel and avoids stride ambiguity.
+        try{
+          const mc=mask.canvas;
+          if(mc){
+            const tc=document.createElement("canvas");
+            tc.width=mw;tc.height=mh;
+            const tx=tc.getContext("2d",{willReadFrequently:true});
+            tx.drawImage(mc,0,0,mw,mh);
+            const px=tx.getImageData(0,0,mw,mh).data;
+
+            // Pick the channel with the strongest mask-like variation.
+            const stats=[];
+            for(let ch=0;ch<4;ch++){
+              let min=255,max=0,sum=0,sum2=0;
+              for(let i=ch;i<px.length;i+=4){
+                const v=px[i];
+                if(v<min)min=v;
+                if(v>max)max=v;
+                sum+=v;sum2+=v*v;
+              }
+              const n=mw*mh;
+              const mean=sum/n;
+              const variance=Math.max(0,sum2/n-mean*mean);
+              stats.push({ch,min,max,variance});
+            }
+            stats.sort((a,b)=>b.variance-a.variance);
+            const chosen=stats[0].ch;
+            const arr=new Float32Array(mw*mh);
+            let peak=0,count=0;
+            for(let i=0,p=chosen;i<arr.length;i++,p+=4){
+              const v=px[p]/255;
+              arr[i]=v;
+              if(v>peak)peak=v;
+              if(v>.20)count++;
+            }
+            console.log("AURA V23 mask canvas:",{
+              width:mw,height:mh,
+              channels:stats,
+              chosenChannel:chosen,
+              peak,
+              coveredPixels:count,
+              totalPixels:mw*mh
+            });
+            if(peak>.05 && count>100){
+              data=arr;
+            }
+          }
+        }catch(maskCanvasError){
+          console.warn("V23 MPMask.canvas read failed, using array fallback:",maskCanvasError);
         }
-        console.log("AURA V22 segmentation:",{width:mw,height:mh,peak,coveredPixels:count});
-        if(peak>.05 && count>100){
+
+        // Fallback: account for possible multi-channel/padded buffers.
+        if(!data){
+          const raw=mask.getAsFloat32Array();
+          const pixels=mw*mh;
+          const stride=Math.max(1,Math.floor(raw.length/pixels));
+          const arr=new Float32Array(pixels);
+          let peak=0,count=0;
+          for(let i=0;i<pixels;i++){
+            let v=raw[i*stride];
+            if(!Number.isFinite(v))v=0;
+            v=Math.max(0,Math.min(1,v));
+            arr[i]=v;
+            if(v>peak)peak=v;
+            if(v>.20)count++;
+          }
+          console.log("AURA V23 array fallback:",{
+            width:mw,height:mh,rawLength:raw.length,stride,peak,
+            coveredPixels:count,totalPixels:pixels
+          });
+          if(peak>.05 && count>100)data=arr;
+        }
+
+        if(data){
           segMask={w:mw,h:mh,data,category:false};
         }
         mask.close();
@@ -120,7 +191,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA V22 SCAN ERROR:",e);
+      console.error("AURA V23 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
       $("status").textContent="Siluet belum tersedia. Lihat Console.";
     }finally{
