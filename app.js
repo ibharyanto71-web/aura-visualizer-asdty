@@ -1,4 +1,4 @@
-const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null,segMask=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
+const $=x=>document.getElementById(x);let stream=null,src=null,det=null,segMask=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
   const status=$("status");
   status.textContent="⏳ Memuat library AI…";
 
@@ -21,7 +21,7 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null
     try{
       status.textContent=`⏳ Memuat AI • ${loader.name}…`;
       const mod=await import(loader.module);
-      const {PoseLandmarker,ImageSegmenter,FilesetResolver}=mod;
+      const {PoseLandmarker,FilesetResolver}=mod;
       if(!PoseLandmarker || !FilesetResolver) throw new Error("Export MediaPipe tidak ditemukan");
 
       const wasm=await FilesetResolver.forVisionTasks(loader.wasm);
@@ -29,24 +29,14 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null
 
       try{
         status.textContent=`⏳ Menyiapkan AI tubuh • GPU…`;
-        const segModel="https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
-        // V20: force ImageSegmenter to CPU. The browser console showed
-        // "segmentation_postprocessor ... NONE activation function chosen on GPU",
-        // so the GPU path can initialize but fail to produce a usable mask.
-        seg=await ImageSegmenter.createFromOptions(wasm,{
-          baseOptions:{modelAssetPath:segModel,delegate:"CPU"},
-          runningMode:"IMAGE",
-          outputCategoryMask:true,
-          outputConfidenceMasks:false
-        });
-
         status.textContent=`⏳ Menyiapkan model • GPU…`;
         det=await PoseLandmarker.createFromOptions(wasm,{
           baseOptions:{modelAssetPath:model,delegate:"GPU"},
           runningMode:"IMAGE",numPoses:3,
           minPoseDetectionConfidence:.45,
           minPosePresenceConfidence:.45,
-          minTrackingConfidence:.45
+          minTrackingConfidence:.45,
+          outputSegmentationMasks:true
         });
       }catch(gpuError){
         console.warn("AURA GPU gagal, fallback CPU:",gpuError);
@@ -56,7 +46,8 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null
           runningMode:"IMAGE",numPoses:3,
           minPoseDetectionConfidence:.45,
           minPosePresenceConfidence:.45,
-          minTrackingConfidence:.45
+          minTrackingConfidence:.45,
+          outputSegmentationMasks:true
         });
       }
 
@@ -82,38 +73,46 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=$("installBox");if(b)b.classList.remove("hidden");});
 const ib=$("installBox");if(ib)ib.onclick=async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;ib.classList.add("hidden")};
 window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$("cam").onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia pada browser/context ini");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});$("video").srcObject=stream;$("camera").classList.remove("hidden");$("work").classList.add("hidden")}catch(e){alert("Izin kamera diperlukan.")}};$("close").onclick=stop;function stop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("camera").classList.add("hidden")}$("shot").onclick=()=>{let c=document.createElement("canvas");c.width=$("video").videoWidth;c.height=$("video").videoHeight;c.getContext("2d").drawImage($("video"),0,0);stop();prep(c)};$("gal").onclick=()=>{const f=$("file");f.value="";f.click()};$("file").onchange=()=>{let f=$("file").files[0];if(!f)return;let im=new Image();im.onload=()=>{let c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);prep(c)};im.src=URL.createObjectURL(f)};function prep(c){let s=Math.min(1,1400/c.width);src=document.createElement("canvas");src.width=c.width*s;src.height=c.height*s;src.getContext("2d").drawImage(c,0,0,src.width,src.height);poses=[];$("work").classList.remove("hidden");$("profile").innerHTML="";$("label").textContent="SIAP";base()}function base(){let c=$("cv"),x=c.getContext("2d");c.width=src.width;c.height=src.height;x.drawImage(src,0,0)}$("scan").onclick=()=>{
-  if(!det||!seg)return alert("Model AI belum siap.");
+  if(!det)return alert("Model AI belum siap.");
   $("work").classList.add("scanning");
   $("label").textContent="MEMBUAT SILUET TUBUH…";
-  $("status").textContent="⏳ AI sedang memisahkan tubuh dari background…";
+  $("status").textContent="⏳ AI sedang membuat segmentation mask dari pose…";
   $("scan").disabled=true;
   setTimeout(async()=>{
     try{
-      poses=det.detect(src).landmarks||[];
-      await new Promise((resolve,reject)=>{
-        seg.segment(src,(result)=>{
-          try{
-            if(!result.categoryMask) throw new Error("Category mask tubuh tidak tersedia");
-            const mask=result.categoryMask;
-            const mw=mask.width,mh=mask.height;
-            const raw=mask.getAsUint8Array();
-            const person=new Uint8Array(raw.length);
-            let personCount=0;
-            for(let i=0;i<raw.length;i++){
-              if(raw[i]===1){ person[i]=255; personCount++; }
-            }
-            if(personCount<Math.max(100,mw*mh*.005))
-              throw new Error("Siluet orang tidak ditemukan pada category mask");
-            segMask={w:mw,h:mh,data:person,category:true};
-            mask.close();
-            resolve();
-          }catch(e){reject(e)}
-        });
-      });
+      const result=det.detect(src);
+      poses=result.landmarks||[];
+      segMask=null;
+
+      // Pose Landmarker can return a per-pixel person likelihood mask.
+      // This is exactly the mask we need for the aura silhouette.
+      if(result.segmentationMasks && result.segmentationMasks.length){
+        const mask=result.segmentationMasks[0];
+        const mw=mask.width,mh=mask.height;
+        const data=mask.getAsFloat32Array();
+        let peak=0,count=0;
+        for(let i=0;i<data.length;i++){
+          if(data[i]>peak)peak=data[i];
+          if(data[i]>.25)count++;
+        }
+        console.log("AURA V22 segmentation:",{width:mw,height:mh,peak,coveredPixels:count});
+        if(peak>.05 && count>100){
+          segMask={w:mw,h:mh,data,category:false};
+        }
+        mask.close();
+      }
+
+      if(!segMask){
+        throw new Error("Pose segmentation mask tidak tersedia / kosong");
+      }
+
       paint();
       profile();
       $("label").textContent=poses.length?"SILUET & AURA SELESAI":"TIDAK ADA SUBJEK";
-      $("status").textContent=poses.length?`✓ ${poses.length} profil + siluet tubuh dibuat`:"Subjek tidak terdeteksi";
+      $("status").textContent=poses.length
+        ?`✓ ${poses.length} profil + siluet tubuh dibuat`
+        :"Subjek tidak terdeteksi";
+
       if(poses.length){
         lastProfile=makeProfile();
         saveHistory(lastProfile);
@@ -121,14 +120,14 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA MASTER V21 SCAN ERROR:",e);
+      console.error("AURA V22 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
-      $("status").textContent="Terjadi kesalahan saat membuat siluet tubuh. Lihat Console.";
+      $("status").textContent="Siluet belum tersedia. Lihat Console.";
     }finally{
       $("work").classList.remove("scanning");
       $("scan").disabled=false;
     }
-  },150);
+  },100);
 };
 function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;let mnx=1,mny=1,mxx=0,mxy=0;a.forEach(q=>{mnx=Math.min(mnx,q.x);mny=Math.min(mny,q.y);mxx=Math.max(mxx,q.x);mxy=Math.max(mxy,q.y)});return{cx:(mnx+mxx)/2,cy:(mny+mxy)/2,rx:(mxx-mnx)/2,ry:(mxy-mny)/2}}function paint(){
   base();
