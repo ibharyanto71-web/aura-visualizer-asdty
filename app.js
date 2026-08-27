@@ -121,7 +121,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA V18 SCAN ERROR:",e);
+      console.error("AURA MASTER V21 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
       $("status").textContent="Terjadi kesalahan saat membuat siluet tubuh. Lihat Console.";
     }finally{
@@ -140,110 +140,171 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
     return;
   }
 
-  // V20: TRUE BODY SILHOUETTE — CPU CATEGORY MASK.
-  // MediaPipe SelfieSegmenter supplies a per-pixel person confidence mask.
-  // The aura is generated ONLY from that silhouette; the original photo is
-  // then drawn last, so no aura color can leak into skin/clothing.
+  // ============================================================
+  // AURA ASDTY — MASTER DESIGN V21
+  // Person segmentation -> organic silhouette -> multi-field aura.
+  // The original photograph is ALWAYS composited last.
+  // ============================================================
 
+  const mw=segMask.w,mh=segMask.h,md=segMask.data;
   const mask=document.createElement("canvas");
   mask.width=w;mask.height=h;
   const m=mask.getContext("2d");
-  const img=m.createImageData(w,h);
-  const d=img.data;
-  const mw=segMask.w,mh=segMask.h,md=segMask.data;
-  const threshold=.42;
+  const img=m.createImageData(w,h),d=img.data;
 
+  // Upsample the segmentation mask with a small amount of edge
+  // softness. This keeps the aura continuous around the whole body.
   for(let y=0;y<h;y++){
     const sy=Math.min(mh-1,Math.floor(y*mh/h));
     for(let xx=0;xx<w;xx++){
       const sx=Math.min(mw-1,Math.floor(xx*mw/w));
       const raw=md[sy*mw+sx];
       const v=segMask.category ? raw/255 : raw;
-      const a=segMask.category ? raw : Math.max(0,Math.min(255,Math.round(v*255)));
+      const a=segMask.category ? raw : Math.round(Math.max(0,Math.min(1,v))*255);
       const i=(y*w+xx)*4;
       d[i]=255;d[i+1]=255;d[i+2]=255;
-      d[i+3]=v>threshold?a:0;
+      d[i+3]=v>.34?a:0;
     }
   }
   m.putImageData(img,0,0);
 
-  // Slightly soften the silhouette edge.
-  const soft=document.createElement("canvas");
-  soft.width=w;soft.height=h;
-  const sm=soft.getContext("2d");
-  sm.filter="blur(1.5px)";
-  sm.drawImage(mask,0,0);
+  // Build a clean silhouette for the aura. A blurred source mask makes
+  // small segmentation gaps close visually without altering the photo.
+  const silhouette=document.createElement("canvas");
+  silhouette.width=w;silhouette.height=h;
+  const sc=silhouette.getContext("2d");
+  sc.filter="blur(1.25px)";
+  sc.drawImage(mask,0,0);
 
-  function ring(blur){
+  function auraRing(blur){
     const q=document.createElement("canvas");
     q.width=w;q.height=h;
-    const qc=q.getContext("2d");
-    qc.filter=`blur(${blur}px)`;
-    qc.drawImage(soft,0,0);
-    qc.globalCompositeOperation="destination-out";
-    qc.filter="none";
-    qc.drawImage(mask,0,0);
+    const qx=q.getContext("2d");
+    qx.filter=`blur(${blur}px)`;
+    qx.drawImage(silhouette,0,0);
+    // Remove the interior so this layer exists outside the body.
+    qx.globalCompositeOperation="destination-out";
+    qx.filter="none";
+    qx.drawImage(mask,0,0);
     return q;
   }
 
-  // Three contour expansions.
-  const tight=ring(Math.max(7,R*.8));
-  const mid=ring(Math.max(16,R*1.65));
-  const wide=ring(Math.max(30,R*2.75));
+  const tight=auraRing(Math.max(9,R*.90));
+  const middle=auraRing(Math.max(20,R*1.90));
+  const outer=auraRing(Math.max(38,R*3.20));
+  const halo=auraRing(Math.max(62,R*5.10));
 
-  function colorLayer(alphaCanvas,stops){
+  const stops=[
+    [0.00,[204,74,255]],
+    [0.13,[157,70,255]],
+    [0.28,[84,105,255]],
+    [0.43,[35,195,255]],
+    [0.57,[45,225,170]],
+    [0.70,[103,232,78]],
+    [0.83,[255,221,58]],
+    [0.92,[255,148,48]],
+    [1.00,[255,70,70]]
+  ];
+
+  function colorize(alphaCanvas,boost=1){
     const out=document.createElement("canvas");
     out.width=w;out.height=h;
     const o=out.getContext("2d");
     const g=o.createLinearGradient(0,0,0,h);
     stops.forEach(s=>g.addColorStop(s[0],`rgb(${s[1][0]},${s[1][1]},${s[1][2]})`));
-    o.fillStyle=g;o.fillRect(0,0,w,h);
+    o.fillStyle=g;
+    o.fillRect(0,0,w,h);
     o.globalCompositeOperation="destination-in";
     o.drawImage(alphaCanvas,0,0);
+    o.globalCompositeOperation="source-over";
+    if(boost!==1){
+      const boosted=document.createElement("canvas");
+      boosted.width=w;boosted.height=h;
+      const b=boosted.getContext("2d");
+      b.globalAlpha=Math.min(1,boost);
+      b.drawImage(out,0,0);
+      return boosted;
+    }
     return out;
   }
-
-  const stops=[
-    [0.00,[190,60,255]],
-    [0.18,[145,75,255]],
-    [0.38,[60,145,255]],
-    [0.56,[40,220,175]],
-    [0.73,[100,230,95]],
-    [0.87,[255,205,55]],
-    [1.00,[255,105,70]]
-  ];
 
   const aura=document.createElement("canvas");
   aura.width=w;aura.height=h;
   const a=aura.getContext("2d");
 
-  a.globalAlpha=.82*I;
-  a.drawImage(colorLayer(wide,stops),0,0);
-  a.globalAlpha=.94*I;
-  a.drawImage(colorLayer(mid,stops),0,0);
-  a.globalAlpha=1;
-  a.drawImage(colorLayer(tight,stops),0,0);
+  // Strong, luminous core + broad atmospheric field.
+  a.globalCompositeOperation="screen";
+  a.globalAlpha=Math.min(1,.42*I);
+  a.drawImage(colorize(halo),0,0);
+  a.globalAlpha=Math.min(1,.62*I);
+  a.drawImage(colorize(outer),0,0);
+  a.globalAlpha=Math.min(1,.82*I);
+  a.drawImage(colorize(middle),0,0);
+  a.globalAlpha=Math.min(1,1.00*I);
+  a.drawImage(colorize(tight),0,0);
 
-  // Soft outer atmosphere from the exact silhouette bounds.
+  // Vertical energy columns give the aura the luminous "field" appearance
+  // of the approved MASTER DESIGN without coloring the subject.
   const b=bounds(poses[0]||[]);
   if(b){
-    const mist=document.createElement("canvas");
-    mist.width=w;mist.height=h;
-    const mm=mist.getContext("2d");
-    const cx=b.cx*w,cy=b.cy*h,rx=Math.max(50,b.rx*w),ry=Math.max(70,b.ry*h);
-    const g=mm.createRadialGradient(cx,cy,Math.min(rx,ry)*.35,cx,cy,Math.max(rx,ry)+R*5);
-    g.addColorStop(0,"rgba(145,85,255,.14)");
-    g.addColorStop(.55,"rgba(70,150,255,.08)");
-    g.addColorStop(1,"rgba(255,255,255,0)");
-    mm.fillStyle=g;mm.fillRect(0,0,w,h);
-    mm.globalCompositeOperation="destination-out";
-    mm.drawImage(soft,0,0);
-    a.globalAlpha=.7*I;
-    a.drawImage(mist,0,0);
-    a.globalAlpha=1;
+    const cx=b.cx*w, cy=b.cy*h;
+    const rx=Math.max(55,b.rx*w), ry=Math.max(75,b.ry*h);
+
+    const field=document.createElement("canvas");
+    field.width=w;field.height=h;
+    const f=field.getContext("2d");
+    const rg=f.createRadialGradient(cx,cy,Math.min(rx,ry)*.30,cx,cy,Math.max(rx,ry)*1.35);
+    rg.addColorStop(0,"rgba(170,100,255,.18)");
+    rg.addColorStop(.32,"rgba(75,160,255,.13)");
+    rg.addColorStop(.58,"rgba(50,230,170,.10)");
+    rg.addColorStop(.78,"rgba(255,205,55,.07)");
+    rg.addColorStop(1,"rgba(255,70,70,0)");
+    f.fillStyle=rg;f.fillRect(0,0,w,h);
+    f.globalCompositeOperation="destination-out";
+    f.drawImage(mask,0,0);
+    a.globalAlpha=.72*I;
+    a.drawImage(field,0,0);
+
+    // Fine energy wisps: deterministic waves, clipped outside the body.
+    const wisps=document.createElement("canvas");
+    wisps.width=w;wisps.height=h;
+    const q=wisps.getContext("2d");
+    q.globalCompositeOperation="screen";
+    for(let k=0;k<18;k++){
+      const yy=h*(0.05+k/19);
+      q.beginPath();
+      for(let xx=0;xx<=w;xx+=Math.max(10,w/90)){
+        const wave=Math.sin(xx*.025+k*1.7)*8+Math.sin(xx*.009-k)*13;
+        const y=yy+wave;
+        if(xx===0) q.moveTo(xx,y); else q.lineTo(xx,y);
+      }
+      q.strokeStyle=`hsla(${275-k*10},100%,68%,${0.025+0.002*k})`;
+      q.lineWidth=Math.max(1,w/900);
+      q.stroke();
+    }
+    q.globalCompositeOperation="destination-out";
+    q.drawImage(mask,0,0);
+    q.filter=`blur(${Math.max(2,R*.55)}px)`;
+    a.globalAlpha=.8*I;
+    a.drawImage(wisps,0,0);
   }
 
-  // CRITICAL: aura behind the untouched original photo.
+  // Tiny ground glow makes the full-body field visually continuous.
+  if(b){
+    const ground=document.createElement("canvas");
+    ground.width=w;ground.height=h;
+    const gg=ground.getContext("2d");
+    const gy=Math.min(h-1,(b.cy+b.ry*.92)*h);
+    const gr=gg.createRadialGradient(b.cx*w,gy,2,b.cx*w,gy,Math.max(80,b.rx*w*1.5));
+    gr.addColorStop(0,"rgba(255,110,70,.24)");
+    gr.addColorStop(.35,"rgba(255,205,55,.14)");
+    gr.addColorStop(1,"rgba(255,205,55,0)");
+    gg.fillStyle=gr;gg.fillRect(0,0,w,h);
+    a.globalAlpha=.85*I;
+    a.drawImage(ground,0,0);
+  }
+
+  // MASTER RULE: original photo is last and remains untouched.
   x.clearRect(0,0,w,h);
   x.drawImage(aura,0,0);
   x.drawImage(src,0,0);
