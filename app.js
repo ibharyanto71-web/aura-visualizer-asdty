@@ -30,22 +30,15 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null
       try{
         status.textContent=`⏳ Menyiapkan AI tubuh • GPU…`;
         const segModel="https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
-        try{
-          seg=await ImageSegmenter.createFromOptions(wasm,{
-            baseOptions:{modelAssetPath:segModel,delegate:"GPU"},
-            runningMode:"IMAGE",
-            outputCategoryMask:false,
-            outputConfidenceMasks:true
-          });
-        }catch(segGpuError){
-          console.warn("AURA segmentation GPU gagal, fallback CPU:",segGpuError);
-          seg=await ImageSegmenter.createFromOptions(wasm,{
-            baseOptions:{modelAssetPath:segModel,delegate:"CPU"},
-            runningMode:"IMAGE",
-            outputCategoryMask:false,
-            outputConfidenceMasks:true
-          });
-        }
+        // V20: force ImageSegmenter to CPU. The browser console showed
+        // "segmentation_postprocessor ... NONE activation function chosen on GPU",
+        // so the GPU path can initialize but fail to produce a usable mask.
+        seg=await ImageSegmenter.createFromOptions(wasm,{
+          baseOptions:{modelAssetPath:segModel,delegate:"CPU"},
+          runningMode:"IMAGE",
+          outputCategoryMask:true,
+          outputConfidenceMasks:false
+        });
 
         status.textContent=`⏳ Menyiapkan model • GPU…`;
         det=await PoseLandmarker.createFromOptions(wasm,{
@@ -100,11 +93,18 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       await new Promise((resolve,reject)=>{
         seg.segment(src,(result)=>{
           try{
-            if(!result.confidenceMasks||!result.confidenceMasks.length) throw new Error("Mask tubuh tidak tersedia");
-            const mask=result.confidenceMasks[0];
+            if(!result.categoryMask) throw new Error("Category mask tubuh tidak tersedia");
+            const mask=result.categoryMask;
             const mw=mask.width,mh=mask.height;
-            const data=mask.getAsFloat32Array();
-            segMask={w:mw,h:mh,data};
+            const raw=mask.getAsUint8Array();
+            const person=new Uint8Array(raw.length);
+            let personCount=0;
+            for(let i=0;i<raw.length;i++){
+              if(raw[i]===1){ person[i]=255; personCount++; }
+            }
+            if(personCount<Math.max(100,mw*mh*.005))
+              throw new Error("Siluet orang tidak ditemukan pada category mask");
+            segMask={w:mw,h:mh,data:person,category:true};
             mask.close();
             resolve();
           }catch(e){reject(e)}
@@ -140,7 +140,7 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
     return;
   }
 
-  // V18: TRUE BODY SILHOUETTE.
+  // V20: TRUE BODY SILHOUETTE — CPU CATEGORY MASK.
   // MediaPipe SelfieSegmenter supplies a per-pixel person confidence mask.
   // The aura is generated ONLY from that silhouette; the original photo is
   // then drawn last, so no aura color can leak into skin/clothing.
@@ -157,8 +157,9 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
     const sy=Math.min(mh-1,Math.floor(y*mh/h));
     for(let xx=0;xx<w;xx++){
       const sx=Math.min(mw-1,Math.floor(xx*mw/w));
-      const v=md[sy*mw+sx];
-      const a=Math.max(0,Math.min(255,Math.round(v*255)));
+      const raw=md[sy*mw+sx];
+      const v=segMask.category ? raw/255 : raw;
+      const a=segMask.category ? raw : Math.max(0,Math.min(255,Math.round(v*255)));
       const i=(y*w+xx)*4;
       d[i]=255;d[i+1]=255;d[i+2]=255;
       d[i+3]=v>threshold?a:0;
