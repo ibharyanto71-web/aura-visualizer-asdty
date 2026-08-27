@@ -75,24 +75,21 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA CLOUD BACKLIGHT V5
-  // Aura is rendered as broad, soft clouds behind the subject.
-  // No polygon, contour, or joint-to-joint lines are drawn.
-
-  function cloud(cx,cy,rx,ry,cc,alpha,blur=18){
+  // AURA V6: visible soft field.
+  // IMPORTANT: use source-over, not screen, because screen over a white
+  // photographic background can wash the aura out completely.
+  function cloud(cx,cy,rx,ry,cc,alpha,blur){
     x.save();
-    x.globalCompositeOperation="screen";
+    x.globalCompositeOperation="source-over";
     x.filter=`blur(${blur}px)`;
     const g=x.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
     g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.24,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.72})`);
-    g.addColorStop(.52,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
-    g.addColorStop(.78,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.08})`);
+    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.72})`);
+    g.addColorStop(.48,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.32})`);
+    g.addColorStop(.72,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.10})`);
     g.addColorStop(1,"rgba(255,255,255,0)");
     x.fillStyle=g;
-    x.beginPath();
-    x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
-    x.fill();
+    x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);x.fill();
     x.restore();
   }
 
@@ -103,39 +100,35 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     const cx=b.cx*w,cy=b.cy*h;
     const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
 
-    // Broad backlight: extends well outside the person.
-    cloud(cx,cy,rx+R*3.5,ry+R*3.5,[155,85,255],.10*I,26);
-    cloud(cx,cy-R*.15,rx+R*2.5,ry+R*2.5,[65,160,255],.085*I,22);
-    cloud(cx,cy+R*.35,rx+R*1.9,ry+R*2.0,[60,225,155],.065*I,20);
+    // Three unmistakable outer aura layers.
+    cloud(cx,cy,rx+R*3.8,ry+R*3.8,[155,70,255],.25*I,28);
+    cloud(cx,cy,rx+R*2.7,ry+R*2.7,[45,145,255],.22*I,22);
+    cloud(cx,cy,rx+R*1.8,ry+R*1.8,[45,215,145],.18*I,18);
 
-    // Shoulder / head cloud.
-    if(p[0] && p[0].visibility>.30)
-      cloud(p[0].x*w,p[0].y*h,R*3.4,R*3.0,[175,90,255],.12*I,24);
-
-    // Large soft clouds at selected anatomical anchors.
-    const anchors=[
-      [11,[110,155,255],1.20],[12,[110,155,255],1.20],
-      [23,[75,220,160],1.30],[24,[75,220,160],1.30],
-      [25,[255,205,70],1.15],[26,[255,205,70],1.15],
-      [27,[255,125,90],1.05],[28,[255,125,90],1.05]
+    // Side clouds make the field visibly extend beyond shoulders, arms and legs.
+    const side=[
+      [11,[90,155,255],1.2],[12,[90,155,255],1.2],
+      [15,[65,170,255],1.0],[16,[70,225,145],1.0],
+      [23,[70,225,145],1.25],[24,[70,225,145],1.25],
+      [27,[255,190,55],1.15],[28,[255,190,55],1.15]
     ];
-
-    for(const [id,cc,scale] of anchors){
+    for(const [id,cc,s] of side){
       const q=p[id];
       if(!q||q.visibility<.35)continue;
-      cloud(
-        q.x*w,q.y*h,
-        R*2.5*scale+28,R*2.8*scale+30,
-        cc,.105*I,18
-      );
+      cloud(q.x*w,q.y*h,R*2.9*s+34,R*3.4*s+38,cc,.20*I,18);
     }
 
-    // Analytical zone clouds.
+    // Head field.
+    const head=p[0];
+    if(head&&head.visibility>.30)
+      cloud(head.x*w,head.y*h,R*3.7+42,R*3.3+38,[180,75,255],.28*I,20);
+
+    // Zone-specific analytical clouds.
     Z.forEach(([name,id,key])=>{
       const q=p[id];
       if(!q||q.visibility<.35)return;
       const cc=C[key];
-      cloud(q.x*w,q.y*h,R*3.0+34,R*3.0+34,cc,.16*I,16);
+      cloud(q.x*w,q.y*h,R*3.4+42,R*3.4+42,cc,.25*I,16);
     });
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
