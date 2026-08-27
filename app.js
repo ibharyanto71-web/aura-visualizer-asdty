@@ -143,11 +143,13 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       }
       scores.sort((a,b)=>b.var-a.var);
 
-      // Prefer alpha if it contains meaningful coverage; otherwise use the
-      // highest-variance channel.
-      let chosen=scores[0].ch;
-      const alphaStats=scores.find(s=>s.ch===3);
-      if(alphaStats && alphaStats.max>8 && alphaStats.var>5) chosen=3;
+      // V25: the SelfieSegmentation canvas is normally fully opaque, so its
+      // alpha channel is NOT the person mask. V24 selected alpha=255 everywhere,
+      // which made the "outside-body" aura ring disappear. Use RGB mask channel
+      // only; choose the most informative channel by variance.
+      const rgbScores=scores.filter(s=>s.ch!==3);
+      rgbScores.sort((a,b)=>b.var-a.var);
+      let chosen=rgbScores[0].ch;
 
       let peak=0,covered=0;
       for(let i=0,p=chosen;i<arr.length;i++,p+=4){
@@ -156,12 +158,15 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         if(v>peak)peak=v;
         if(v>.20)covered++;
       }
-      console.log("AURA V24 selfie mask:",{
+      const coverage=covered/(mw*mh);
+      console.log("AURA V25 selfie mask:",{
         width:mw,height:mh,chosenChannel:chosen,
-        channels:scores,peak,coveredPixels:covered,totalPixels:mw*mh
+        channels:scores,peak,coveredPixels:covered,
+        totalPixels:mw*mh,coverage
       });
 
       if(peak<=.05 || covered<100) throw new Error("Siluet tubuh kosong");
+      if(coverage>.98) throw new Error("Mask penuh satu kanvas — channel mask salah");
       segMask={w:mw,h:mh,data:arr,category:false};
 
       paint();
@@ -178,7 +183,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA V24 SCAN ERROR:",e);
+      console.error("AURA V25 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
       $("status").textContent="Siluet belum tersedia. Lihat Console.";
     }finally{
