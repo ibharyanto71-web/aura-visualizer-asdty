@@ -74,135 +74,211 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const c=$("cv"),x=c.getContext("2d"),w=c.width,h=c.height;
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
 
-  // AURA V13 — FULL BODY ENVELOPE
-  // Adds explicit head-to-feet aura bands based on the detected full-body bounds,
-  // while keeping the original photo untouched and occluding only the aura layer.
-  function ellipse(ctx,cx,cy,rx,ry,fill){
+  // AURA V14 — CONTOUR AURA
+  // The aura is generated from the detected body silhouette itself:
+  // BODY MASK -> BLURRED EXPANSION -> OUTER RING -> COLOR GRADIENT.
+  // The original photograph is never erased or recolored.
+
+  function ellipse(ctx,cx,cy,rx,ry,fill="#fff"){
     ctx.fillStyle=fill;
-    ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fill();
   }
-  function limbMask(ctx,A,B,thickness){
+
+  function limb(ctx,A,B,thickness){
     const ax=A.x*w,ay=A.y*h,bx=B.x*w,by=B.y*h;
-    const len=Math.hypot(bx-ax,by-ay)||1,ang=Math.atan2(by-ay,bx-ax);
-    ctx.save();ctx.translate((ax+bx)/2,(ay+by)/2);ctx.rotate(ang);
-    ctx.fillRect(-len/2,-thickness/2,len,thickness);ctx.restore();
-  }
-  function cloud(ctx,cx,cy,rx,ry,cc,alpha,blur){
+    const len=Math.hypot(bx-ax,by-ay)||1;
+    const ang=Math.atan2(by-ay,bx-ax);
     ctx.save();
-    ctx.globalCompositeOperation="source-over";
-    ctx.filter=`blur(${blur}px)`;
-    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
-    g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.18,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.82})`);
-    g.addColorStop(.42,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.48})`);
-    g.addColorStop(.70,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.17})`);
-    g.addColorStop(1,"rgba(255,255,255,0)");
-    ctx.fillStyle=g;
-    ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
+    ctx.translate((ax+bx)/2,(ay+by)/2);
+    ctx.rotate(ang);
+    ctx.fillRect(-len/2,-thickness/2,len,thickness);
     ctx.restore();
   }
 
-  poses.forEach(p=>{
-    const b=bounds(p); if(!b)return;
-    const visible=id=>p[id]&&p[id].visibility>.30;
-    const cx=b.cx*w, cy=b.cy*h;
-    const rx=Math.max(48,b.rx*w), ry=Math.max(65,b.ry*h);
+  function addJoint(ctx,q,r){
+    if(q&&q.visibility>.30) ellipse(ctx,q.x*w,q.y*h,r,r);
+  }
 
-    // Inner mask, deliberately narrower than the body so the outer aura remains visible.
+  // Colorize an alpha mask with a vertical multi-color gradient.
+  function colorizeAlpha(alphaCanvas, stops){
+    const out=document.createElement("canvas");
+    out.width=w;out.height=h;
+    const o=out.getContext("2d");
+
+    const g=o.createLinearGradient(0,0,0,h);
+    stops.forEach(s=>g.addColorStop(s[0],`rgb(${s[1][0]},${s[1][1]},${s[1][2]})`));
+    o.fillStyle=g;
+    o.fillRect(0,0,w,h);
+
+    o.globalCompositeOperation="destination-in";
+    o.drawImage(alphaCanvas,0,0);
+    return out;
+  }
+
+  // Create a blurred silhouette alpha.
+  function glowFromMask(mask,blurPx,cutBody=true){
+    const g=document.createElement("canvas");
+    g.width=w;g.height=h;
+    const gc=g.getContext("2d");
+    gc.filter=`blur(${blurPx}px)`;
+    gc.drawImage(mask,0,0);
+
+    // Keep only the area outside the body.
+    if(cutBody){
+      gc.globalCompositeOperation="destination-out";
+      gc.filter="none";
+      gc.drawImage(mask,0,0);
+    }
+    return g;
+  }
+
+  poses.forEach(p=>{
+    const b=bounds(p);
+    if(!b)return;
+    const visible=id=>p[id]&&p[id].visibility>.30;
+
+    // 1. Build a fuller body silhouette.
     const mask=document.createElement("canvas");
     mask.width=w;mask.height=h;
     const m=mask.getContext("2d");
-    m.clearRect(0,0,w,h);m.fillStyle="#fff";
+    m.clearRect(0,0,w,h);
+    m.fillStyle="#fff";
 
-    if(visible(0))
-      ellipse(m,p[0].x*w,p[0].y*h,Math.max(19,R*1.15+8),Math.max(22,R*1.25+8),"#fff");
-
-    if(visible(11)&&visible(12)&&visible(23)&&visible(24)){
-      const top=(p[11].y+p[12].y)/2,bot=(p[23].y+p[24].y)/2;
-      const left=Math.min(p[11].x,p[12].x,p[23].x,p[24].x);
-      const right=Math.max(p[11].x,p[12].x,p[23].x,p[24].x);
-      ellipse(m,((left+right)/2)*w,((top+bot)/2)*h,
-        Math.max(24,(right-left)*w*.62+R*.45),
-        Math.max(36,(bot-top)*h*.56+R*.55),"#fff");
+    if(visible(0)){
+      ellipse(m,p[0].x*w,p[0].y*h,
+        Math.max(22,R*1.30+10),
+        Math.max(25,R*1.42+10));
     }
 
-    [
+    // Torso + pelvis as overlapping organic ellipses.
+    if(visible(11)&&visible(12)){
+      const sx=(p[11].x+p[12].x)/2*w;
+      const sy=(p[11].y+p[12].y)/2*h;
+      const sw=Math.abs(p[11].x-p[12].x)*w;
+      ellipse(m,sx,sy,Math.max(27,sw*.72+R*.55),Math.max(34,R*2.0+30));
+    }
+
+    if(visible(23)&&visible(24)){
+      const hx=(p[23].x+p[24].x)/2*w;
+      const hy=(p[23].y+p[24].y)/2*h;
+      const hw=Math.abs(p[23].x-p[24].x)*w;
+      ellipse(m,hx,hy,Math.max(25,hw*.82+R*.55),Math.max(25,R*1.7+25));
+    }
+
+    // Limbs, with joints explicitly filled to prevent gaps.
+    const links=[
       [11,13],[13,15],[12,14],[14,16],
       [11,23],[12,24],[23,24],
       [23,25],[25,27],[24,26],[26,28],
       [27,29],[29,31],[28,30],[30,32]
-    ].forEach(([a,d])=>{
+    ];
+
+    links.forEach(([a,d])=>{
       if(!visible(a)||!visible(d))return;
       const A=p[a],B=p[d];
       const dist=Math.hypot((B.x-A.x)*w,(B.y-A.y)*h);
-      limbMask(m,A,B,Math.max(11,Math.min(34,dist*.22+R*.38)));
+      limb(m,A,B,Math.max(13,Math.min(42,dist*.27+R*.45)));
     });
 
-    const soft=document.createElement("canvas");
-    soft.width=w;soft.height=h;
-    const sm=soft.getContext("2d");
-    sm.filter=`blur(${Math.max(3,R*.35)}px)`;
-    sm.drawImage(mask,0,0);
+    [0,11,12,13,14,15,16,23,24,25,26,27,28,31,32].forEach(id=>{
+      if(visible(id))addJoint(m,p[id],Math.max(9,R*.42));
+    });
+
+    // Slight feather on the body edge.
+    const bodySoft=document.createElement("canvas");
+    bodySoft.width=w;bodySoft.height=h;
+    const bs=bodySoft.getContext("2d");
+    bs.filter=`blur(${Math.max(2,R*.22)}px)`;
+    bs.drawImage(mask,0,0);
+
+    // 2. CONTOUR RINGS: tight, medium, wide.
+    const ringTight=glowFromMask(mask,Math.max(8,R*.95),true);
+    const ringMid=glowFromMask(mask,Math.max(17,R*1.75),true);
+    const ringWide=glowFromMask(mask,Math.max(31,R*2.8),true);
+
+    // 3. Color gradients follow body height rather than isolated points.
+    const stops=[
+      [0.00,[185,65,255]],
+      [0.18,[145,75,255]],
+      [0.38,[55,145,255]],
+      [0.56,[45,220,170]],
+      [0.73,[110,230,95]],
+      [0.86,[255,205,55]],
+      [1.00,[255,105,70]]
+    ];
+
+    const wide=colorizeAlpha(ringWide,stops);
+    const mid=colorizeAlpha(ringMid,stops);
+    const tight=colorizeAlpha(ringTight,stops);
 
     const aura=document.createElement("canvas");
     aura.width=w;aura.height=h;
     const a=aura.getContext("2d");
 
-    // Strong outer envelope.
-    cloud(a,cx,cy,rx+R*5.4,ry+R*5.4,[155,55,255],.38*I,30);
-    cloud(a,cx,cy,rx+R*4.1,ry+R*4.1,[45,120,255],.34*I,24);
-    cloud(a,cx,cy,rx+R*2.9,ry+R*2.9,[35,220,160],.28*I,19);
+    // Broad colored atmosphere.
+    a.globalAlpha=.82*I;
+    a.drawImage(wide,0,0);
+    a.globalAlpha=.92*I;
+    a.drawImage(mid,0,0);
+    a.globalAlpha=1;
+    a.drawImage(tight,0,0);
 
-    // Explicit full-body vertical bands. These guarantee aura from head to feet
-    // even when some lower-body landmarks have low confidence.
-    const topY=(b.cy-b.ry)*h;
-    const bodyH=Math.max(100,(b.ry*2)*h);
-    const bandX=cx;
-    const bandW=Math.max(55,rx*.72);
+    // Local highlights reinforce head, shoulders, hands, knees and feet.
+    function spot(q,cc,size,alpha){
+      if(!q||q.visibility<.35)return;
+      const s=document.createElement("canvas");
+      s.width=w;s.height=h;
+      const sc=s.getContext("2d");
+      const px=q.x*w,py=q.y*h;
+      const rg=sc.createRadialGradient(px,py,0,px,py,size);
+      rg.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*I})`);
+      rg.addColorStop(.38,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.55*I})`);
+      rg.addColorStop(1,"rgba(255,255,255,0)");
+      sc.fillStyle=rg;
+      sc.beginPath();sc.arc(px,py,size,0,Math.PI*2);sc.fill();
 
-    cloud(a,bandX,topY+bodyH*.16,bandW+R*2.0,bodyH*.19+R*2.2,[185,55,255],.32*I,20);
-    cloud(a,bandX,topY+bodyH*.36,bandW+R*2.3,bodyH*.22+R*2.4,[65,145,255],.30*I,20);
-    cloud(a,bandX,topY+bodyH*.58,bandW+R*2.5,bodyH*.23+R*2.5,[45,220,165],.29*I,20);
-    cloud(a,bandX,topY+bodyH*.80,bandW+R*2.7,bodyH*.21+R*2.7,[255,200,55],.30*I,20);
-    cloud(a,bandX,topY+bodyH*.94,bandW+R*2.9,bodyH*.15+R*2.8,[255,115,70],.32*I,20);
+      // Keep the highlight outside the body.
+      sc.globalCompositeOperation="destination-out";
+      sc.drawImage(bodySoft,0,0);
+      a.drawImage(s,0,0);
+    }
 
-    // Side envelope around the complete silhouette.
-    cloud(a,cx-rx*.72,cy,rx*.42+R*2.3,ry*.82+R*2.3,[80,150,255],.24*I,20);
-    cloud(a,cx+rx*.72,cy,rx*.42+R*2.3,ry*.82+R*2.3,[75,210,170],.24*I,20);
+    spot(p[0],[190,70,255],R*4.0+.55*ry,.48);
+    spot(p[11],[65,150,255],R*3.8+.45*ry,.34);
+    spot(p[12],[65,150,255],R*3.8+.45*ry,.34);
+    spot(p[15],[45,220,175],R*3.4+42,.36);
+    spot(p[16],[45,220,175],R*3.4+42,.36);
+    spot(p[25],[255,205,55],R*3.2+42,.34);
+    spot(p[26],[255,205,55],R*3.2+42,.34);
+    spot(p[27],[255,110,70],R*3.0+40,.30);
+    spot(p[28],[255,110,70],R*3.0+40,.30);
+    spot(p[31],[255,95,70],R*2.7+36,.28);
+    spot(p[32],[255,95,70],R*2.7+36,.28);
 
-    // Anatomical local colors.
-    const local=[
-      [0,[185,55,255],1.1],
-      [11,[60,145,255],1.0],[12,[60,145,255],1.0],
-      [13,[55,150,255],1.05],[14,[55,150,255],1.05],
-      [15,[45,225,175],1.0],[16,[45,225,175],1.0],
-      [23,[55,225,150],1.1],[24,[55,225,150],1.1],
-      [25,[255,205,45],1.05],[26,[255,205,45],1.05],
-      [27,[255,110,65],1.0],[28,[255,110,65],1.0],
-      [31,[255,90,70],.95],[32,[255,90,70],.95]
-    ];
-    local.forEach(([id,cc,s])=>{
-      const q=p[id];if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*3.3*s+44,R*3.4*s+46,cc,.34*I,15);
-    });
+    // 4. Add a very soft outer mist, still centered on the silhouette bounds.
+    const mist=document.createElement("canvas");
+    mist.width=w;mist.height=h;
+    const mm=mist.getContext("2d");
+    const mg=mm.createRadialGradient(
+      b.cx*w,b.cy*h,Math.max(rx*.35,ry*.30),
+      b.cx*w,b.cy*h,Math.max(rx+R*5.5,ry+R*5.5)
+    );
+    mg.addColorStop(0,"rgba(125,105,255,.12)");
+    mg.addColorStop(.55,"rgba(90,170,255,.08)");
+    mg.addColorStop(1,"rgba(255,255,255,0)");
+    mm.fillStyle=mg;mm.fillRect(0,0,w,h);
+    mm.globalCompositeOperation="destination-out";
+    mm.drawImage(bodySoft,0,0);
+    a.globalAlpha=.75*I;a.drawImage(mist,0,0);a.globalAlpha=1;
 
-    Z.forEach(([name,id,key])=>{
-      const q=p[id];if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*3.4+44,R*3.4+44,C[key],.38*I,14);
-    });
-
-    // Remove only the body from aura layer.
-    a.save();
-    a.globalCompositeOperation="destination-out";
-    a.filter="none";
-    a.drawImage(soft,0,0);
-    a.restore();
-
-    // Original photo remains intact.
+    // 5. Composite onto untouched photo.
     x.clearRect(0,0,w,h);
     x.drawImage(src,0,0);
     x.drawImage(aura,0,0);
 
+    // Restore original pixels inside the body.
     const body=document.createElement("canvas");
     body.width=w;body.height=h;
     const bc=body.getContext("2d");
