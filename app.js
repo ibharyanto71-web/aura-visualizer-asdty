@@ -73,17 +73,10 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   base();
   const c=$("cv"),x=c.getContext("2d"),w=c.width,h=c.height;
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
-  const keys=Object.keys(C);
 
-  // AURA V10 — SILHOUETTE OCCLUSION, ROBUST COMPOSITING
-  // Strategy:
-  // 1. Build an approximate body mask offscreen.
-  // 2. Build aura offscreen.
-  // 3. Remove the body area from the aura offscreen.
-  // 4. Draw aura over the photo.
-  // 5. Redraw the original photo only inside the body mask.
-  // The main photo is never erased.
-
+  // AURA V11 — FULL BODY / STRONG COLOR
+  // Keeps the V10 compositing architecture:
+  // photo is never erased; only the offscreen aura is occluded by the body.
   function ellipse(ctx,cx,cy,rx,ry,fill){
     ctx.fillStyle=fill;
     ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
@@ -106,9 +99,9 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     ctx.filter=`blur(${blur}px)`;
     const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
     g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.70})`);
-    g.addColorStop(.50,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
-    g.addColorStop(.76,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.07})`);
+    g.addColorStop(.20,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.78})`);
+    g.addColorStop(.45,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.40})`);
+    g.addColorStop(.72,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.13})`);
     g.addColorStop(1,"rgba(255,255,255,0)");
     ctx.fillStyle=g;
     ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
@@ -120,7 +113,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
     if(!b)return;
     const visible=id=>p[id]&&p[id].visibility>.30;
 
-    // BODY MASK
+    // 1) FULL-BODY APPROXIMATE SILHOUETTE
     const mask=document.createElement("canvas");
     mask.width=w;mask.height=h;
     const m=mask.getContext("2d");
@@ -129,16 +122,17 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
 
     if(visible(0)){
       ellipse(m,p[0].x*w,p[0].y*h,
-        Math.max(24,R*1.45+12),Math.max(27,R*1.55+12),"#fff");
+        Math.max(25,R*1.5+14),Math.max(29,R*1.6+14),"#fff");
     }
 
     if(visible(11)&&visible(12)&&visible(23)&&visible(24)){
-      const top=(p[11].y+p[12].y)/2,bot=(p[23].y+p[24].y)/2;
+      const top=(p[11].y+p[12].y)/2;
+      const bot=(p[23].y+p[24].y)/2;
       const left=Math.min(p[11].x,p[12].x,p[23].x,p[24].x);
       const right=Math.max(p[11].x,p[12].x,p[23].x,p[24].x);
       ellipse(m,((left+right)/2)*w,((top+bot)/2)*h,
-        Math.max(28,(right-left)*w*.72+R*.65),
-        Math.max(42,(bot-top)*h*.62+R*.75),"#fff");
+        Math.max(30,(right-left)*w*.76+R*.8),
+        Math.max(45,(bot-top)*h*.68+R*.9),"#fff");
     }
 
     const links=[
@@ -147,62 +141,89 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
       [23,25],[25,27],[24,26],[26,28],
       [27,29],[29,31],[28,30],[30,32]
     ];
+
     m.save();
     links.forEach(([a,d])=>{
       if(!visible(a)||!visible(d))return;
       const A=p[a],B=p[d];
       const dist=Math.hypot((B.x-A.x)*w,(B.y-A.y)*h);
-      limbMask(m,A,B,Math.max(14,Math.min(44,dist*.28+R*.55)));
+      limbMask(m,A,B,Math.max(16,Math.min(50,dist*.31+R*.65)));
     });
     m.restore();
 
-    // Feathered mask for a softer body boundary.
+    // 2) SOFTEN SILHOUETTE EDGE
     const soft=document.createElement("canvas");
     soft.width=w;soft.height=h;
     const sm=soft.getContext("2d");
-    sm.filter=`blur(${Math.max(5,R*.55)}px)`;
+    sm.filter=`blur(${Math.max(5,R*.60)}px)`;
     sm.drawImage(mask,0,0);
 
-    // AURA OFFSCREEN
+    // 3) STRONG FULL-BODY AURA — separate offscreen layer
     const aura=document.createElement("canvas");
     aura.width=w;aura.height=h;
     const a=aura.getContext("2d");
+
     const cx=b.cx*w,cy=b.cy*h;
-    const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
+    const rx=Math.max(48,b.rx*w),ry=Math.max(65,b.ry*h);
 
-    cloud(a,cx,cy,rx+R*3.4,ry+R*3.4,[150,75,255],.20*I,24);
-    cloud(a,cx,cy,rx+R*2.45,ry+R*2.45,[55,150,255],.17*I,20);
-    cloud(a,cx,cy,rx+R*1.65,ry+R*1.65,[60,215,155],.13*I,17);
+    // Large outer envelope so head-to-feet receive a continuous aura.
+    cloud(a,cx,cy,rx+R*4.6,ry+R*4.6,[150,60,255],.30*I,28);
+    cloud(a,cx,cy,rx+R*3.4,ry+R*3.4,[50,120,255],.27*I,23);
+    cloud(a,cx,cy,rx+R*2.35,ry+R*2.35,[40,215,160],.23*I,19);
 
+    // Vertical full-body glow.
+    cloud(a,cx,cy,Math.max(55,rx*.72)+R*1.6,Math.max(80,ry*.90)+R*1.6,
+      [95,110,255],.20*I,20);
+
+    // Head / shoulder glow.
+    if(visible(0))
+      cloud(a,p[0].x*w,p[0].y*h,R*3.3+42,R*3.3+42,[190,65,255],.30*I,17);
+
+    if(visible(11)&&visible(12)){
+      const sx=(p[11].x+p[12].x)*w/2;
+      const sy=(p[11].y+p[12].y)*h/2;
+      cloud(a,sx,sy,Math.abs(p[11].x-p[12].x)*w*.85+R*2.5+35,
+        R*3.0+35,[70,145,255],.26*I,17);
+    }
+
+    // Local body-part colors, including hands and feet.
     const local=[
-      [0,[180,75,255],1.15],[11,[75,155,255],1.0],[12,[75,155,255],1.0],
-      [23,[70,220,155],1.1],[24,[70,220,155],1.1],
-      [27,[255,190,60],1.0],[28,[255,190,60],1.0]
+      [13,[70,150,255],1.05],[14,[70,150,255],1.05],
+      [15,[55,215,175],1.0],[16,[55,215,175],1.0],
+      [23,[65,220,155],1.10],[24,[65,220,155],1.10],
+      [25,[255,205,55],1.05],[26,[255,205,55],1.05],
+      [27,[255,125,75],1.00],[28,[255,125,75],1.00],
+      [31,[255,105,70],.90],[32,[255,105,70],.90]
     ];
+
     local.forEach(([id,cc,s])=>{
-      const q=p[id]; if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*2.7*s+34,R*2.9*s+36,cc,.18*I,16);
+      const q=p[id];
+      if(!q||q.visibility<.35)return;
+      cloud(a,q.x*w,q.y*h,R*3.0*s+42,R*3.15*s+44,
+        cc,.27*I,16);
     });
 
+    // Analytical zone colors remain visible but do not overpower the body field.
     Z.forEach(([name,id,key])=>{
-      const q=p[id]; if(!q||q.visibility<.35)return;
-      cloud(a,q.x*w,q.y*h,R*2.8+38,R*2.8+38,C[key],.20*I,15);
+      const q=p[id];
+      if(!q||q.visibility<.35)return;
+      cloud(a,q.x*w,q.y*h,R*3.1+42,R*3.1+42,
+        C[key],.28*I,15);
     });
 
-    // Cut body out of AURA ONLY.
+    // 4) OCCLUDE BODY ONLY FROM AURA
     a.save();
     a.globalCompositeOperation="destination-out";
     a.filter="none";
     a.drawImage(soft,0,0);
     a.restore();
 
-    // Restore base photo first, then aura.
+    // 5) ORIGINAL PHOTO + AURA
     x.clearRect(0,0,w,h);
     x.drawImage(src,0,0);
     x.drawImage(aura,0,0);
 
-    // Restore the ORIGINAL photo only inside the body mask.
-    // This prevents any aura from tinting/covering the subject.
+    // Restore original pixels inside the body.
     const body=document.createElement("canvas");
     body.width=w;body.height=h;
     const bc=body.getContext("2d");
