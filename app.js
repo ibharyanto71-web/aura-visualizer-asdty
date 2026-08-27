@@ -1,43 +1,70 @@
 const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
   const status=$("status");
-  status.textContent="⏳ Memuat model AI…";
-  try{
-    const mod=await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm");
-    const {PoseLandmarker,FilesetResolver}=mod;
-    const wasm=await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
-    );
-    const model="https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
+  status.textContent="⏳ Memuat library AI…";
+
+  const loaders=[
+    {
+      name:"jsDelivr",
+      module:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs",
+      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+    },
+    {
+      name:"esm.sh",
+      module:"https://esm.sh/@mediapipe/tasks-vision@0.10.22",
+      wasm:"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+    }
+  ];
+
+  let lastError=null;
+
+  for(const loader of loaders){
     try{
-      det=await PoseLandmarker.createFromOptions(wasm,{
-        baseOptions:{modelAssetPath:model,delegate:"GPU"},
-        runningMode:"IMAGE",numPoses:3,
-        minPoseDetectionConfidence:.45,
-        minPosePresenceConfidence:.45,
-        minTrackingConfidence:.45
-      });
-    }catch(gpuError){
-      status.textContent="⏳ GPU gagal, mencoba mode CPU…";
-      det=await PoseLandmarker.createFromOptions(wasm,{
-        baseOptions:{modelAssetPath:model,delegate:"CPU"},
-        runningMode:"IMAGE",numPoses:3,
-        minPoseDetectionConfidence:.45,
-        minPosePresenceConfidence:.45,
-        minTrackingConfidence:.45
-      });
+      status.textContent=`⏳ Memuat AI • ${loader.name}…`;
+      const mod=await import(loader.module);
+      const {PoseLandmarker,FilesetResolver}=mod;
+      if(!PoseLandmarker || !FilesetResolver) throw new Error("Export MediaPipe tidak ditemukan");
+
+      const wasm=await FilesetResolver.forVisionTasks(loader.wasm);
+      const model="https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
+
+      try{
+        status.textContent=`⏳ Menyiapkan model • GPU…`;
+        det=await PoseLandmarker.createFromOptions(wasm,{
+          baseOptions:{modelAssetPath:model,delegate:"GPU"},
+          runningMode:"IMAGE",numPoses:3,
+          minPoseDetectionConfidence:.45,
+          minPosePresenceConfidence:.45,
+          minTrackingConfidence:.45
+        });
+      }catch(gpuError){
+        console.warn("AURA GPU gagal, fallback CPU:",gpuError);
+        status.textContent="⏳ GPU gagal • mencoba CPU…";
+        det=await PoseLandmarker.createFromOptions(wasm,{
+          baseOptions:{modelAssetPath:model,delegate:"CPU"},
+          runningMode:"IMAGE",numPoses:3,
+          minPoseDetectionConfidence:.45,
+          minPosePresenceConfidence:.45,
+          minTrackingConfidence:.45
+        });
+      }
+
+      status.textContent="✓ AI siap • profil zona tubuh aktif";
+      return;
+    }catch(e){
+      lastError=e;
+      console.error(`AURA AI loader gagal (${loader.name}):`,e);
     }
-    status.textContent="✓ AI siap • profil zona tubuh aktif";
-  }catch(e){
-    console.error("AURA AI INIT ERROR:",e);
-    status.textContent="✕ AI belum siap • tekan MUAT ULANG";
-    let b=$("retryAI");
-    if(!b){
-      b=document.createElement("button");
-      b.id="retryAI"; b.className="main";
-      b.textContent="↻ MUAT ULANG AI";
-      b.onclick=()=>{b.remove();init()};
-      status.parentNode?.appendChild(b);
-    }
+  }
+
+  console.error("AURA AI INIT FINAL ERROR:",lastError);
+  status.textContent="✕ AI belum siap • tekan MUAT ULANG";
+  let b=$("retryAI");
+  if(!b){
+    b=document.createElement("button");
+    b.id="retryAI"; b.className="main";
+    b.textContent="↻ MUAT ULANG AI";
+    b.onclick=()=>{b.remove();init()};
+    status.parentNode?.appendChild(b);
   }
 }init();renderHistory();renderJournal();
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=$("installBox");if(b)b.classList.remove("hidden");});
