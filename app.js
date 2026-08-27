@@ -1,4 +1,45 @@
-const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){try{const {PoseLandmarker,FilesetResolver}=await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm");let v=await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm");det=await PoseLandmarker.createFromOptions(v,{baseOptions:{modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",delegate:"GPU"},runningMode:"IMAGE",numPoses:3,minPoseDetectionConfidence:.45,minPosePresenceConfidence:.45,minTrackingConfidence:.45});$("status").textContent="✓ AI siap • profil zona tubuh aktif"}catch(e){$("status").textContent="AI belum siap • periksa internet"}}init();renderHistory();renderJournal();
+const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
+  const status=$("status");
+  status.textContent="⏳ Memuat model AI…";
+  try{
+    const mod=await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm");
+    const {PoseLandmarker,FilesetResolver}=mod;
+    const wasm=await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+    );
+    const model="https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
+    try{
+      det=await PoseLandmarker.createFromOptions(wasm,{
+        baseOptions:{modelAssetPath:model,delegate:"GPU"},
+        runningMode:"IMAGE",numPoses:3,
+        minPoseDetectionConfidence:.45,
+        minPosePresenceConfidence:.45,
+        minTrackingConfidence:.45
+      });
+    }catch(gpuError){
+      status.textContent="⏳ GPU gagal, mencoba mode CPU…";
+      det=await PoseLandmarker.createFromOptions(wasm,{
+        baseOptions:{modelAssetPath:model,delegate:"CPU"},
+        runningMode:"IMAGE",numPoses:3,
+        minPoseDetectionConfidence:.45,
+        minPosePresenceConfidence:.45,
+        minTrackingConfidence:.45
+      });
+    }
+    status.textContent="✓ AI siap • profil zona tubuh aktif";
+  }catch(e){
+    console.error("AURA AI INIT ERROR:",e);
+    status.textContent="✕ AI belum siap • tekan MUAT ULANG";
+    let b=$("retryAI");
+    if(!b){
+      b=document.createElement("button");
+      b.id="retryAI"; b.className="main";
+      b.textContent="↻ MUAT ULANG AI";
+      b.onclick=()=>{b.remove();init()};
+      status.parentNode?.appendChild(b);
+    }
+  }
+}init();renderHistory();renderJournal();
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=$("installBox");if(b)b.classList.remove("hidden");});
 const ib=$("installBox");if(ib)ib.onclick=async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;ib.classList.add("hidden")};
 window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$("cam").onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia pada browser/context ini");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});$("video").srcObject=stream;$("camera").classList.remove("hidden");$("work").classList.add("hidden")}catch(e){alert("Izin kamera diperlukan.")}};$("close").onclick=stop;function stop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("camera").classList.add("hidden")}$("shot").onclick=()=>{let c=document.createElement("canvas");c.width=$("video").videoWidth;c.height=$("video").videoHeight;c.getContext("2d").drawImage($("video"),0,0);stop();prep(c)};$("gal").onclick=()=>{const f=$("file");f.value="";f.click()};$("file").onchange=()=>{let f=$("file").files[0];if(!f)return;let im=new Image();im.onload=()=>{let c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);prep(c)};im.src=URL.createObjectURL(f)};function prep(c){let s=Math.min(1,1400/c.width);src=document.createElement("canvas");src.width=c.width*s;src.height=c.height*s;src.getContext("2d").drawImage(c,0,0,src.width,src.height);poses=[];$("work").classList.remove("hidden");$("profile").innerHTML="";$("label").textContent="SIAP";base()}function base(){let c=$("cv"),x=c.getContext("2d");c.width=src.width;c.height=src.height;x.drawImage(src,0,0)}$("scan").onclick=()=>{if(!det)return alert("Model AI belum siap.");$("work").classList.add("scanning");$("label").textContent="MEMBUAT PROFIL…";$("scan").disabled=true;setTimeout(()=>{poses=det.detect(src).landmarks||[];paint();profile();$("work").classList.remove("scanning");$("scan").disabled=false;$("label").textContent=poses.length?"PROFIL SELESAI":"TIDAK ADA SUBJEK";$("status").textContent=poses.length?`✓ ${poses.length} profil subjek dibuat`:"Subjek tidak terdeteksi";if(poses.length){lastProfile=makeProfile();saveHistory(lastProfile);renderAdvancedAnalysis(lastProfile);renderComparison()}},1500)};function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;let mnx=1,mny=1,mxx=0,mxy=0;a.forEach(q=>{mnx=Math.min(mnx,q.x);mny=Math.min(mny,q.y);mxx=Math.max(mxx,q.x);mxy=Math.max(mxy,q.y)});return{cx:(mnx+mxx)/2,cy:(mny+mxy)/2,rx:(mxx-mnx)/2,ry:(mxy-mny)/2}}function paint(){base();let c=$("cv"),x=c.getContext("2d"),w=c.width,h=c.height,I=+$("int").value/100,R=+$("rad").value;poses.forEach(p=>{let b=bounds(p);if(!b)return;let cx=b.cx*w,cy=b.cy*h,rx=Math.max(25,b.rx*w+R),ry=Math.max(35,b.ry*h+R);x.save();x.globalCompositeOperation="screen";for(let i=5;i;i--){let q=i/5,gr=x.createRadialGradient(cx,cy,Math.min(rx,ry)*.05,cx,cy,Math.max(rx,ry)*(1+i*.07));let cc=C[Object.keys(C)[i%5]];gr.addColorStop(0,`rgba(255,255,255,${.04*I})`);gr.addColorStop(.3,`rgba(${cc},${.11*I*q})`);gr.addColorStop(1,"rgba(0,0,0,0)");x.fillStyle=gr;x.beginPath();x.ellipse(cx,cy,rx*(1+i*.06),ry*(1+i*.06),0,0,Math.PI*2);x.fill()}x.restore();Z.forEach(([name,id,key])=>{let q=p[id];if(!q||q.visibility<.35)return;let px=q.x*w,py=q.y*h,r=R*.85+18,cc=C[key],gr=x.createRadialGradient(px,py,0,px,py,r);gr.addColorStop(0,`rgba(${cc},${.55*I})`);gr.addColorStop(.4,`rgba(${cc},${.2*I})`);gr.addColorStop(1,"rgba(0,0,0,0)");x.save();x.globalCompositeOperation="screen";x.fillStyle=gr;x.beginPath();x.arc(px,py,r,0,Math.PI*2);x.fill();x.restore()})})}function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
