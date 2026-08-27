@@ -75,116 +75,141 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
   const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
   const keys=Object.keys(C);
 
-  // AURA V7 — BODY FOLLOWING AURA
-  // Diffuse backlight clouds are placed around anatomical regions so the
-  // aura follows the detected body without drawing outlines or landmark lines.
-  function cloud(cx,cy,rx,ry,cc,alpha,blur){
-    x.save();
-    x.globalCompositeOperation="source-over";
-    x.filter=`blur(${blur}px)`;
-    const g=x.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
-    g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
-    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.70})`);
-    g.addColorStop(.48,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
-    g.addColorStop(.76,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.075})`);
-    g.addColorStop(1,"rgba(255,255,255,0)");
-    x.fillStyle=g;
-    x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);x.fill();
-    x.restore();
+  // AURA V8 — BODY SILHOUETTE AURA
+  // Builds a soft silhouette mask from the pose skeleton, then renders
+  // aura OUTSIDE that mask. No polygon/outline/landmark lines are drawn.
+  function ellipse(ctx,cx,cy,rx,ry,fill){
+    ctx.fillStyle=fill;
+    ctx.beginPath();
+    ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fill();
   }
 
-  function joint(id){
-    const q=poses[0]?.[id];
-    return q&&q.visibility>.35 ? q : null;
+  function limbMask(ctx,A,B,thickness){
+    const ax=A.x*w,ay=A.y*h,bx=B.x*w,by=B.y*h;
+    const dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy)||1;
+    const ang=Math.atan2(dy,dx);
+    ctx.save();
+    ctx.translate((ax+bx)/2,(ay+by)/2);
+    ctx.rotate(ang);
+    ctx.fillRect(-len/2,-thickness/2,len,thickness);
+    ctx.restore();
+  }
+
+  function cloud(ctx,cx,cy,rx,ry,cc,alpha,blur,mode="source-over"){
+    ctx.save();
+    ctx.globalCompositeOperation=mode;
+    ctx.filter=`blur(${blur}px)`;
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(rx,ry));
+    g.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha})`);
+    g.addColorStop(.22,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.70})`);
+    g.addColorStop(.50,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.30})`);
+    g.addColorStop(.76,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.07})`);
+    g.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=g;
+    ctx.beginPath();ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);ctx.fill();
+    ctx.restore();
   }
 
   poses.forEach((p,pi)=>{
     const b=bounds(p);
     if(!b)return;
 
-    const sx=q=>q.x*w, sy=q=>q.y*h;
+    // Offscreen silhouette mask made from body regions + thick limb capsules.
+    const mask=document.createElement("canvas");
+    mask.width=w; mask.height=h;
+    const m=mask.getContext("2d");
+    m.clearRect(0,0,w,h);
+    m.fillStyle="rgba(255,255,255,1)";
 
-    // Base field keeps the aura continuous.
-    cloud(
-      b.cx*w,b.cy*h,
-      Math.max(42,b.rx*w)+R*2.0,
-      Math.max(55,b.ry*h)+R*2.0,
-      [105,120,245],.055*I,24
-    );
+    const visible=id=>p[id]&&p[id].visibility>.30;
+    const jointRadius=(id,baseR)=>{
+      const q=p[id];
+      if(!q)return;
+      ellipse(m,q.x*w,q.y*h,baseR,baseR*1.08,"rgba(255,255,255,1)");
+    };
 
-    // Head / neck: compact halo.
-    if(p[0]&&p[0].visibility>.35)
-      cloud(sx(p[0]),sy(p[0]),R*2.8+30,R*2.8+30,[180,75,255],.25*I,17);
+    // Head.
+    if(visible(0)) jointRadius(0,Math.max(22,R*1.45+10));
 
-    if(p[11]&&p[12]&&p[11].visibility>.35&&p[12].visibility>.35){
-      const cx=(p[11].x+p[12].x)*w/2, cy=(p[11].y+p[12].y)*h/2;
-      const rx=Math.abs(p[11].x-p[12].x)*w*.9+R*1.8+28;
-      cloud(cx,cy,Math.max(38,rx),R*2.1+30,[80,155,255],.20*I,18);
-    }
-
-    // Torso field, vertically oriented.
-    if(p[11]&&p[12]&&p[23]&&p[24]){
+    // Torso as a soft anatomical body mass.
+    if(visible(11)&&visible(12)&&visible(23)&&visible(24)){
       const top=(p[11].y+p[12].y)/2;
       const bot=(p[23].y+p[24].y)/2;
       const left=Math.min(p[11].x,p[12].x,p[23].x,p[24].x);
       const right=Math.max(p[11].x,p[12].x,p[23].x,p[24].x);
-      cloud(
-        ((left+right)/2)*w,
-        ((top+bot)/2)*h,
-        Math.max(42,(right-left)*w*.95)+R*1.7,
-        Math.max(65,(bot-top)*h*.65)+R*1.7,
-        [65,210,165],.13*I,22
+      ellipse(
+        m,((left+right)/2)*w,((top+bot)/2)*h,
+        Math.max(25,(right-left)*w*.72+R*.65),
+        Math.max(40,(bot-top)*h*.62+R*.75),
+        "rgba(255,255,255,1)"
       );
     }
 
-    // Arms and legs: soft clouds at joints, not lines.
-    const limbs=[
-      [13,[65,165,255],1.0],[14,[65,165,255],1.0],
-      [15,[60,200,175],.92],[16,[60,200,175],.92],
-      [23,[70,220,155],1.05],[24,[70,220,155],1.05],
-      [25,[255,205,65],1.0],[26,[255,205,65],1.0],
-      [27,[255,125,90],.95],[28,[255,125,90],.95]
+    // Limb capsules create a continuous approximate silhouette.
+    const links=[
+      [11,13],[13,15],[12,14],[14,16],
+      [11,23],[12,24],[23,24],
+      [23,25],[25,27],[24,26],[26,28],
+      [27,29],[29,31],[28,30],[30,32]
     ];
-    limbs.forEach(([id,cc,s])=>{
-      const q=p[id];
-      if(!q||q.visibility<.35)return;
-      cloud(
-        sx(q),sy(q),
-        R*2.0*s+26,R*2.35*s+30,
-        cc,.16*I,15
-      );
-    });
-
-    // Additional soft fields between anatomical midpoints create continuity
-    // while remaining completely line-free.
-    const pairs=[
-      [11,13,[70,155,255]],[13,15,[65,195,185]],
-      [12,14,[70,155,255]],[14,16,[65,195,185]],
-      [23,25,[100,215,150]],[25,27,[255,180,70]],
-      [24,26,[100,215,150]],[26,28,[255,180,70]]
-    ];
-    pairs.forEach(([a,d,cc])=>{
+    m.save();
+    m.fillStyle="rgba(255,255,255,1)";
+    links.forEach(([a,d])=>{
+      if(!visible(a)||!visible(d))return;
       const A=p[a],B=p[d];
-      if(!A||!B||A.visibility<.35||B.visibility<.35)return;
-      cloud(
-        ((A.x+B.x)/2)*w,((A.y+B.y)/2)*h,
-        Math.abs(A.x-B.x)*w*.65+R*1.5+22,
-        Math.abs(A.y-B.y)*h*.65+R*1.5+24,
-        cc,.095*I,17
-      );
+      const dist=Math.hypot((B.x-A.x)*w,(B.y-A.y)*h);
+      const thick=Math.max(14,Math.min(44,dist*.28+R*.55));
+      limbMask(m,A,B,thick);
     });
+    m.restore();
 
-    // Analytical zone aura remains the strongest local color.
+    // Feather the silhouette edge.
+    const soft=document.createElement("canvas");
+    soft.width=w;soft.height=h;
+    const sm=soft.getContext("2d");
+    sm.filter=`blur(${Math.max(4,R*.45)}px)`;
+    sm.drawImage(mask,0,0);
+
+    // Broad colored aura clouds are first laid down behind the body.
+    const cx=b.cx*w,cy=b.cy*h;
+    const rx=Math.max(42,b.rx*w),ry=Math.max(55,b.ry*h);
+
+    cloud(x,cx,cy,rx+R*3.4,ry+R*3.4,[150,75,255],.17*I,24);
+    cloud(x,cx,cy,rx+R*2.45,ry+R*2.45,[55,150,255],.14*I,20);
+    cloud(x,cx,cy,rx+R*1.65,ry+R*1.65,[60,215,155],.10*I,17);
+
+    // Zone clouds, still soft and behind the body.
     Z.forEach(([name,id,key])=>{
       const q=p[id];
       if(!q||q.visibility<.35)return;
       const cc=C[key];
-      cloud(
-        sx(q),sy(q),
-        R*2.7+38,R*2.9+40,
-        cc,.22*I,14
-      );
+      cloud(x,q.x*w,q.y*h,R*2.7+36,R*2.7+36,cc,.16*I,15);
     });
+
+    // Silhouette exclusion: erase the aura from the detected body area.
+    // This is what makes the aura appear to wrap around the body instead of
+    // sitting on top of it.
+    x.save();
+    x.globalCompositeOperation="destination-out";
+    x.filter="none";
+    x.drawImage(soft,0,0);
+    x.restore();
+
+    // A subtle secondary outer halo is clipped by the same body exclusion.
+    x.save();
+    x.globalCompositeOperation="source-over";
+    x.filter=`blur(${Math.max(8,R*.75)}px)`;
+    const halo=x.createRadialGradient(cx,cy,Math.min(rx,ry)*.35,cx,cy,Math.max(rx,ry)+R*3);
+    halo.addColorStop(0,`rgba(120,150,255,${.035*I})`);
+    halo.addColorStop(.55,`rgba(140,100,255,${.055*I})`);
+    halo.addColorStop(1,"rgba(255,255,255,0)");
+    x.fillStyle=halo;
+    x.beginPath();x.ellipse(cx,cy,rx+R*2.6,ry+R*2.6,0,0,Math.PI*2);x.fill();
+    x.globalCompositeOperation="destination-out";
+    x.filter="none";
+    x.drawImage(soft,0,0);
+    x.restore();
   });
 }function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
 function makeProfile(){
