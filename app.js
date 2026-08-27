@@ -159,7 +159,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         if(v>.20)covered++;
       }
       const coverage=covered/(mw*mh);
-      console.log("AURA V25 selfie mask:",{
+      console.log("AURA V26 selfie mask:",{
         width:mw,height:mh,chosenChannel:chosen,
         channels:scores,peak,coveredPixels:covered,
         totalPixels:mw*mh,coverage
@@ -167,6 +167,45 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
 
       if(peak<=.05 || covered<100) throw new Error("Siluet tubuh kosong");
       if(coverage>.98) throw new Error("Mask penuh satu kanvas — channel mask salah");
+
+      // V26: automatically determine mask polarity using the pose bounding box.
+      // Some rendered segmentation canvases are visually inverted depending on
+      // the backend. We know where the person is from Pose Landmarker, so the
+      // correct mask must have higher average confidence inside that box than
+      // outside it. If not, invert the mask.
+      const p=poses[0]||[];
+      const bb=bounds(p);
+      if(bb){
+        const x0=Math.max(0,Math.floor((bb.cx-bb.rx)*mw));
+        const x1=Math.min(mw-1,Math.ceil((bb.cx+bb.rx)*mw));
+        const y0=Math.max(0,Math.floor((bb.cy-bb.ry)*mh));
+        const y1=Math.min(mh-1,Math.ceil((bb.cy+bb.ry)*mh));
+        let insideSum=0,insideN=0,outsideSum=0,outsideN=0;
+        const marginX=Math.max(1,Math.floor((x1-x0)*.12));
+        const marginY=Math.max(1,Math.floor((y1-y0)*.12));
+        for(let yy=0;yy<mh;yy++){
+          for(let xx=0;xx<mw;xx++){
+            const v=arr[yy*mw+xx];
+            const inside=xx>=x0&&xx<=x1&&yy>=y0&&yy<=y1;
+            if(inside){insideSum+=v;insideN++;}
+            else if(xx<Math.max(0,x0-marginX)||xx>Math.min(mw-1,x1+marginX)||
+                    yy<Math.max(0,y0-marginY)||yy>Math.min(mh-1,y1+marginY)){
+              outsideSum+=v;outsideN++;
+            }
+          }
+        }
+        const insideMean=insideN?insideSum/insideN:0;
+        const outsideMean=outsideN?outsideSum/outsideN:0;
+        const invert=insideMean<outsideMean;
+        if(invert){
+          for(let i=0;i<arr.length;i++) arr[i]=1-arr[i];
+        }
+        console.log("AURA V26 mask polarity:",{
+          insideMean,outsideMean,inverted:invert,
+          bbox:{cx:bb.cx,cy:bb.cy,rx:bb.rx,ry:bb.ry}
+        });
+      }
+
       segMask={w:mw,h:mh,data:arr,category:false};
 
       paint();
@@ -183,7 +222,7 @@ window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$
         renderComparison();
       }
     }catch(e){
-      console.error("AURA V25 SCAN ERROR:",e);
+      console.error("AURA V26 SCAN ERROR:",e);
       $("label").textContent="ERROR AI";
       $("status").textContent="Siluet belum tersedia. Lihat Console.";
     }finally{
@@ -233,7 +272,7 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
       const a=Math.round(Math.max(0,Math.min(1,v))*255);
       const i=(y*w+xx)*4;
       d[i]=255;d[i+1]=255;d[i+2]=255;
-      d[i+3]=v>.20?a:0;
+      d[i+3]=v>.12?a:0;
     }
   }
   m.putImageData(img,0,0);
@@ -259,10 +298,10 @@ function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;
     return q;
   }
 
-  const tight=auraRing(Math.max(9,R*.90));
-  const middle=auraRing(Math.max(20,R*1.90));
-  const outer=auraRing(Math.max(38,R*3.20));
-  const halo=auraRing(Math.max(62,R*5.10));
+  const tight=auraRing(Math.max(6,R*.70));
+  const middle=auraRing(Math.max(15,R*1.45));
+  const outer=auraRing(Math.max(28,R*2.50));
+  const halo=auraRing(Math.max(48,R*4.00));
 
   const stops=[
     [0.00,[204,74,255]],
