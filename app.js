@@ -1,4 +1,4 @@
-const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
+const $=x=>document.getElementById(x);let stream=null,src=null,det=null,seg=null,segMask=null,poses=[];let deferredInstall=null;let lastProfile=null;const HISTORY_KEY="asdty-aura-v16-journal";const C={purple:[180,105,255],gold:[255,210,70],blue:[70,170,255],green:[70,230,145],pink:[255,105,205]};const Z=[["Kepala",0,"purple"],["Dada",11,"gold"],["Tangan kiri",15,"blue"],["Tangan kanan",16,"green"],["Pinggul",23,"gold"],["Kaki kiri",27,"pink"],["Kaki kanan",28,"purple"]];async function init(){
   const status=$("status");
   status.textContent="⏳ Memuat library AI…";
 
@@ -21,13 +21,32 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[]
     try{
       status.textContent=`⏳ Memuat AI • ${loader.name}…`;
       const mod=await import(loader.module);
-      const {PoseLandmarker,FilesetResolver}=mod;
+      const {PoseLandmarker,ImageSegmenter,FilesetResolver}=mod;
       if(!PoseLandmarker || !FilesetResolver) throw new Error("Export MediaPipe tidak ditemukan");
 
       const wasm=await FilesetResolver.forVisionTasks(loader.wasm);
       const model="https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
 
       try{
+        status.textContent=`⏳ Menyiapkan AI tubuh • GPU…`;
+        const segModel="https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
+        try{
+          seg=await ImageSegmenter.createFromOptions(wasm,{
+            baseOptions:{modelAssetPath:segModel,delegate:"GPU"},
+            runningMode:"IMAGE",
+            outputCategoryMask:false,
+            outputConfidenceMasks:true
+          });
+        }catch(segGpuError){
+          console.warn("AURA segmentation GPU gagal, fallback CPU:",segGpuError);
+          seg=await ImageSegmenter.createFromOptions(wasm,{
+            baseOptions:{modelAssetPath:segModel,delegate:"CPU"},
+            runningMode:"IMAGE",
+            outputCategoryMask:false,
+            outputConfidenceMasks:true
+          });
+        }
+
         status.textContent=`⏳ Menyiapkan model • GPU…`;
         det=await PoseLandmarker.createFromOptions(wasm,{
           baseOptions:{modelAssetPath:model,delegate:"GPU"},
@@ -69,220 +88,166 @@ const $=x=>document.getElementById(x);let stream=null,src=null,det=null,poses=[]
 }init();renderHistory();renderJournal();
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredInstall=e;const b=$("installBox");if(b)b.classList.remove("hidden");});
 const ib=$("installBox");if(ib)ib.onclick=async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;ib.classList.add("hidden")};
-window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$("cam").onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia pada browser/context ini");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});$("video").srcObject=stream;$("camera").classList.remove("hidden");$("work").classList.add("hidden")}catch(e){alert("Izin kamera diperlukan.")}};$("close").onclick=stop;function stop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("camera").classList.add("hidden")}$("shot").onclick=()=>{let c=document.createElement("canvas");c.width=$("video").videoWidth;c.height=$("video").videoHeight;c.getContext("2d").drawImage($("video"),0,0);stop();prep(c)};$("gal").onclick=()=>{const f=$("file");f.value="";f.click()};$("file").onchange=()=>{let f=$("file").files[0];if(!f)return;let im=new Image();im.onload=()=>{let c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);prep(c)};im.src=URL.createObjectURL(f)};function prep(c){let s=Math.min(1,1400/c.width);src=document.createElement("canvas");src.width=c.width*s;src.height=c.height*s;src.getContext("2d").drawImage(c,0,0,src.width,src.height);poses=[];$("work").classList.remove("hidden");$("profile").innerHTML="";$("label").textContent="SIAP";base()}function base(){let c=$("cv"),x=c.getContext("2d");c.width=src.width;c.height=src.height;x.drawImage(src,0,0)}$("scan").onclick=()=>{if(!det)return alert("Model AI belum siap.");$("work").classList.add("scanning");$("label").textContent="MEMBUAT PROFIL…";$("scan").disabled=true;setTimeout(()=>{try{poses=det.detect(src).landmarks||[];paint();profile();$("label").textContent=poses.length?"PROFIL SELESAI":"TIDAK ADA SUBJEK";$("status").textContent=poses.length?`✓ ${poses.length} profil subjek dibuat`:"Subjek tidak terdeteksi";if(poses.length){lastProfile=makeProfile();saveHistory(lastProfile);renderAdvancedAnalysis(lastProfile);renderComparison()}}catch(e){console.error("AURA SCAN ERROR:",e);$("label").textContent="ERROR RENDER";$("status").textContent="Terjadi kesalahan saat membuat aura. Lihat Console."}finally{$("work").classList.remove("scanning");$("scan").disabled=false}},1500)};function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;let mnx=1,mny=1,mxx=0,mxy=0;a.forEach(q=>{mnx=Math.min(mnx,q.x);mny=Math.min(mny,q.y);mxx=Math.max(mxx,q.x);mxy=Math.max(mxy,q.y)});return{cx:(mnx+mxx)/2,cy:(mny+mxy)/2,rx:(mxx-mnx)/2,ry:(mxy-mny)/2}}function paint(){
+window.addEventListener("appinstalled",()=>{if(ib)ib.classList.add("hidden")});$("cam").onclick=async()=>{try{if(!navigator.mediaDevices?.getUserMedia)throw new Error("Kamera tidak tersedia pada browser/context ini");stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});$("video").srcObject=stream;$("camera").classList.remove("hidden");$("work").classList.add("hidden")}catch(e){alert("Izin kamera diperlukan.")}};$("close").onclick=stop;function stop(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$("camera").classList.add("hidden")}$("shot").onclick=()=>{let c=document.createElement("canvas");c.width=$("video").videoWidth;c.height=$("video").videoHeight;c.getContext("2d").drawImage($("video"),0,0);stop();prep(c)};$("gal").onclick=()=>{const f=$("file");f.value="";f.click()};$("file").onchange=()=>{let f=$("file").files[0];if(!f)return;let im=new Image();im.onload=()=>{let c=document.createElement("canvas");c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext("2d").drawImage(im,0,0);prep(c)};im.src=URL.createObjectURL(f)};function prep(c){let s=Math.min(1,1400/c.width);src=document.createElement("canvas");src.width=c.width*s;src.height=c.height*s;src.getContext("2d").drawImage(c,0,0,src.width,src.height);poses=[];$("work").classList.remove("hidden");$("profile").innerHTML="";$("label").textContent="SIAP";base()}function base(){let c=$("cv"),x=c.getContext("2d");c.width=src.width;c.height=src.height;x.drawImage(src,0,0)}$("scan").onclick=()=>{
+  if(!det||!seg)return alert("Model AI belum siap.");
+  $("work").classList.add("scanning");
+  $("label").textContent="MEMBUAT SILUET TUBUH…";
+  $("status").textContent="⏳ AI sedang memisahkan tubuh dari background…";
+  $("scan").disabled=true;
+  setTimeout(async()=>{
+    try{
+      poses=det.detect(src).landmarks||[];
+      await new Promise((resolve,reject)=>{
+        seg.segment(src,(result)=>{
+          try{
+            if(!result.confidenceMasks||!result.confidenceMasks.length) throw new Error("Mask tubuh tidak tersedia");
+            const mask=result.confidenceMasks[0];
+            const mw=mask.width,mh=mask.height;
+            const data=mask.getAsFloat32Array();
+            segMask={w:mw,h:mh,data};
+            mask.close();
+            resolve();
+          }catch(e){reject(e)}
+        });
+      });
+      paint();
+      profile();
+      $("label").textContent=poses.length?"SILUET & AURA SELESAI":"TIDAK ADA SUBJEK";
+      $("status").textContent=poses.length?`✓ ${poses.length} profil + siluet tubuh dibuat`:"Subjek tidak terdeteksi";
+      if(poses.length){
+        lastProfile=makeProfile();
+        saveHistory(lastProfile);
+        renderAdvancedAnalysis(lastProfile);
+        renderComparison();
+      }
+    }catch(e){
+      console.error("AURA V18 SCAN ERROR:",e);
+      $("label").textContent="ERROR AI";
+      $("status").textContent="Terjadi kesalahan saat membuat siluet tubuh. Lihat Console.";
+    }finally{
+      $("work").classList.remove("scanning");
+      $("scan").disabled=false;
+    }
+  },150);
+};
+function bounds(p){let a=p.filter(q=>q.visibility>.35);if(!a.length)return null;let mnx=1,mny=1,mxx=0,mxy=0;a.forEach(q=>{mnx=Math.min(mnx,q.x);mny=Math.min(mny,q.y);mxx=Math.max(mxx,q.x);mxy=Math.max(mxy,q.y)});return{cx:(mnx+mxx)/2,cy:(mny+mxy)/2,rx:(mxx-mnx)/2,ry:(mxy-mny)/2}}function paint(){
   base();
   const c=$("cv"),x=c.getContext("2d"),w=c.width,h=c.height;
-  const I=Math.max(.25,+$("int").value/100),R=Math.max(10,+$("rad").value);
+  const I=Math.max(.25,+$("int").value/100),R=Math.max(8,+$("rad").value);
 
-  // AURA V14 — CONTOUR AURA
-  // The aura is generated from the detected body silhouette itself:
-  // BODY MASK -> BLURRED EXPANSION -> OUTER RING -> COLOR GRADIENT.
-  // The original photograph is always rendered last, guaranteeing zero aura color inside the body.
-
-  function ellipse(ctx,cx,cy,rx,ry,fill="#fff"){
-    ctx.fillStyle=fill;
-    ctx.beginPath();
-    ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
-    ctx.fill();
+  if(!segMask||!segMask.data){
+    x.drawImage(src,0,0);
+    return;
   }
 
-  function limb(ctx,A,B,thickness){
-    const ax=A.x*w,ay=A.y*h,bx=B.x*w,by=B.y*h;
-    const len=Math.hypot(bx-ax,by-ay)||1;
-    const ang=Math.atan2(by-ay,bx-ax);
-    ctx.save();
-    ctx.translate((ax+bx)/2,(ay+by)/2);
-    ctx.rotate(ang);
-    ctx.fillRect(-len/2,-thickness/2,len,thickness);
-    ctx.restore();
+  // V18: TRUE BODY SILHOUETTE.
+  // MediaPipe SelfieSegmenter supplies a per-pixel person confidence mask.
+  // The aura is generated ONLY from that silhouette; the original photo is
+  // then drawn last, so no aura color can leak into skin/clothing.
+
+  const mask=document.createElement("canvas");
+  mask.width=w;mask.height=h;
+  const m=mask.getContext("2d");
+  const img=m.createImageData(w,h);
+  const d=img.data;
+  const mw=segMask.w,mh=segMask.h,md=segMask.data;
+  const threshold=.42;
+
+  for(let y=0;y<h;y++){
+    const sy=Math.min(mh-1,Math.floor(y*mh/h));
+    for(let xx=0;xx<w;xx++){
+      const sx=Math.min(mw-1,Math.floor(xx*mw/w));
+      const v=md[sy*mw+sx];
+      const a=Math.max(0,Math.min(255,Math.round(v*255)));
+      const i=(y*w+xx)*4;
+      d[i]=255;d[i+1]=255;d[i+2]=255;
+      d[i+3]=v>threshold?a:0;
+    }
+  }
+  m.putImageData(img,0,0);
+
+  // Slightly soften the silhouette edge.
+  const soft=document.createElement("canvas");
+  soft.width=w;soft.height=h;
+  const sm=soft.getContext("2d");
+  sm.filter="blur(1.5px)";
+  sm.drawImage(mask,0,0);
+
+  function ring(blur){
+    const q=document.createElement("canvas");
+    q.width=w;q.height=h;
+    const qc=q.getContext("2d");
+    qc.filter=`blur(${blur}px)`;
+    qc.drawImage(soft,0,0);
+    qc.globalCompositeOperation="destination-out";
+    qc.filter="none";
+    qc.drawImage(mask,0,0);
+    return q;
   }
 
-  function addJoint(ctx,q,r){
-    if(q&&q.visibility>.30) ellipse(ctx,q.x*w,q.y*h,r,r);
-  }
+  // Three contour expansions.
+  const tight=ring(Math.max(7,R*.8));
+  const mid=ring(Math.max(16,R*1.65));
+  const wide=ring(Math.max(30,R*2.75));
 
-  // Colorize an alpha mask with a vertical multi-color gradient.
-  function colorizeAlpha(alphaCanvas, stops){
+  function colorLayer(alphaCanvas,stops){
     const out=document.createElement("canvas");
     out.width=w;out.height=h;
     const o=out.getContext("2d");
-
     const g=o.createLinearGradient(0,0,0,h);
     stops.forEach(s=>g.addColorStop(s[0],`rgb(${s[1][0]},${s[1][1]},${s[1][2]})`));
-    o.fillStyle=g;
-    o.fillRect(0,0,w,h);
-
+    o.fillStyle=g;o.fillRect(0,0,w,h);
     o.globalCompositeOperation="destination-in";
     o.drawImage(alphaCanvas,0,0);
     return out;
   }
 
-  // Create a blurred silhouette alpha.
-  function glowFromMask(mask,blurPx,cutBody=true){
-    const g=document.createElement("canvas");
-    g.width=w;g.height=h;
-    const gc=g.getContext("2d");
-    gc.filter=`blur(${blurPx}px)`;
-    gc.drawImage(mask,0,0);
+  const stops=[
+    [0.00,[190,60,255]],
+    [0.18,[145,75,255]],
+    [0.38,[60,145,255]],
+    [0.56,[40,220,175]],
+    [0.73,[100,230,95]],
+    [0.87,[255,205,55]],
+    [1.00,[255,105,70]]
+  ];
 
-    // Keep only the area outside the body.
-    if(cutBody){
-      gc.globalCompositeOperation="destination-out";
-      gc.filter="none";
-      gc.drawImage(mask,0,0);
-    }
-    return g;
-  }
+  const aura=document.createElement("canvas");
+  aura.width=w;aura.height=h;
+  const a=aura.getContext("2d");
 
-  poses.forEach(p=>{
-    const b=bounds(p);
-    if(!b)return;
-    const visible=id=>p[id]&&p[id].visibility>.30;
-    const rx=Math.max(48,b.rx*w);
-    const ry=Math.max(65,b.ry*h);
+  a.globalAlpha=.82*I;
+  a.drawImage(colorLayer(wide,stops),0,0);
+  a.globalAlpha=.94*I;
+  a.drawImage(colorLayer(mid,stops),0,0);
+  a.globalAlpha=1;
+  a.drawImage(colorLayer(tight,stops),0,0);
 
-    // 1. Build a fuller body silhouette.
-    const mask=document.createElement("canvas");
-    mask.width=w;mask.height=h;
-    const m=mask.getContext("2d");
-    m.clearRect(0,0,w,h);
-    m.fillStyle="#fff";
-
-    if(visible(0)){
-      ellipse(m,p[0].x*w,p[0].y*h,
-        Math.max(22,R*1.30+10),
-        Math.max(25,R*1.42+10));
-    }
-
-    // Torso + pelvis as overlapping organic ellipses.
-    if(visible(11)&&visible(12)){
-      const sx=(p[11].x+p[12].x)/2*w;
-      const sy=(p[11].y+p[12].y)/2*h;
-      const sw=Math.abs(p[11].x-p[12].x)*w;
-      ellipse(m,sx,sy,Math.max(27,sw*.72+R*.55),Math.max(34,R*2.0+30));
-    }
-
-    if(visible(23)&&visible(24)){
-      const hx=(p[23].x+p[24].x)/2*w;
-      const hy=(p[23].y+p[24].y)/2*h;
-      const hw=Math.abs(p[23].x-p[24].x)*w;
-      ellipse(m,hx,hy,Math.max(25,hw*.82+R*.55),Math.max(25,R*1.7+25));
-    }
-
-    // Limbs, with joints explicitly filled to prevent gaps.
-    const links=[
-      [11,13],[13,15],[12,14],[14,16],
-      [11,23],[12,24],[23,24],
-      [23,25],[25,27],[24,26],[26,28],
-      [27,29],[29,31],[28,30],[30,32]
-    ];
-
-    links.forEach(([a,d])=>{
-      if(!visible(a)||!visible(d))return;
-      const A=p[a],B=p[d];
-      const dist=Math.hypot((B.x-A.x)*w,(B.y-A.y)*h);
-      limb(m,A,B,Math.max(13,Math.min(42,dist*.27+R*.45)));
-    });
-
-    [0,11,12,13,14,15,16,23,24,25,26,27,28,31,32].forEach(id=>{
-      if(visible(id))addJoint(m,p[id],Math.max(9,R*.42));
-    });
-
-    // Slight feather on the body edge.
-    const bodySoft=document.createElement("canvas");
-    bodySoft.width=w;bodySoft.height=h;
-    const bs=bodySoft.getContext("2d");
-    bs.filter=`blur(${Math.max(2,R*.22)}px)`;
-    bs.drawImage(mask,0,0);
-
-    // 2. CONTOUR RINGS: tight, medium, wide.
-    const ringTight=glowFromMask(mask,Math.max(8,R*.95),true);
-    const ringMid=glowFromMask(mask,Math.max(17,R*1.75),true);
-    const ringWide=glowFromMask(mask,Math.max(31,R*2.8),true);
-
-    // 3. Color gradients follow body height rather than isolated points.
-    const stops=[
-      [0.00,[185,65,255]],
-      [0.18,[145,75,255]],
-      [0.38,[55,145,255]],
-      [0.56,[45,220,170]],
-      [0.73,[110,230,95]],
-      [0.86,[255,205,55]],
-      [1.00,[255,105,70]]
-    ];
-
-    const wide=colorizeAlpha(ringWide,stops);
-    const mid=colorizeAlpha(ringMid,stops);
-    const tight=colorizeAlpha(ringTight,stops);
-
-    const aura=document.createElement("canvas");
-    aura.width=w;aura.height=h;
-    const a=aura.getContext("2d");
-
-    // Broad colored atmosphere.
-    a.globalAlpha=.82*I;
-    a.drawImage(wide,0,0);
-    a.globalAlpha=.92*I;
-    a.drawImage(mid,0,0);
-    a.globalAlpha=1;
-    a.drawImage(tight,0,0);
-
-    // Local highlights reinforce head, shoulders, hands, knees and feet.
-    function spot(q,cc,size,alpha){
-      if(!q||q.visibility<.35)return;
-      const s=document.createElement("canvas");
-      s.width=w;s.height=h;
-      const sc=s.getContext("2d");
-      const px=q.x*w,py=q.y*h;
-      const rg=sc.createRadialGradient(px,py,0,px,py,size);
-      rg.addColorStop(0,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*I})`);
-      rg.addColorStop(.38,`rgba(${cc[0]},${cc[1]},${cc[2]},${alpha*.55*I})`);
-      rg.addColorStop(1,"rgba(255,255,255,0)");
-      sc.fillStyle=rg;
-      sc.beginPath();sc.arc(px,py,size,0,Math.PI*2);sc.fill();
-
-      // Keep the highlight outside the body.
-      sc.globalCompositeOperation="destination-out";
-      sc.drawImage(bodySoft,0,0);
-      a.drawImage(s,0,0);
-    }
-
-    spot(p[0],[190,70,255],R*4.0+.55*ry,.48);
-    spot(p[11],[65,150,255],R*3.8+.45*ry,.34);
-    spot(p[12],[65,150,255],R*3.8+.45*ry,.34);
-    spot(p[15],[45,220,175],R*3.4+42,.36);
-    spot(p[16],[45,220,175],R*3.4+42,.36);
-    spot(p[25],[255,205,55],R*3.2+42,.34);
-    spot(p[26],[255,205,55],R*3.2+42,.34);
-    spot(p[27],[255,110,70],R*3.0+40,.30);
-    spot(p[28],[255,110,70],R*3.0+40,.30);
-    spot(p[31],[255,95,70],R*2.7+36,.28);
-    spot(p[32],[255,95,70],R*2.7+36,.28);
-
-    // 4. Add a very soft outer mist, still centered on the silhouette bounds.
+  // Soft outer atmosphere from the exact silhouette bounds.
+  const b=bounds(poses[0]||[]);
+  if(b){
     const mist=document.createElement("canvas");
     mist.width=w;mist.height=h;
     const mm=mist.getContext("2d");
-    const mg=mm.createRadialGradient(
-      b.cx*w,b.cy*h,Math.max(rx*.35,ry*.30),
-      b.cx*w,b.cy*h,Math.max(rx+R*5.5,ry+R*5.5)
-    );
-    mg.addColorStop(0,"rgba(125,105,255,.12)");
-    mg.addColorStop(.55,"rgba(90,170,255,.08)");
-    mg.addColorStop(1,"rgba(255,255,255,0)");
-    mm.fillStyle=mg;mm.fillRect(0,0,w,h);
+    const cx=b.cx*w,cy=b.cy*h,rx=Math.max(50,b.rx*w),ry=Math.max(70,b.ry*h);
+    const g=mm.createRadialGradient(cx,cy,Math.min(rx,ry)*.35,cx,cy,Math.max(rx,ry)+R*5);
+    g.addColorStop(0,"rgba(145,85,255,.14)");
+    g.addColorStop(.55,"rgba(70,150,255,.08)");
+    g.addColorStop(1,"rgba(255,255,255,0)");
+    mm.fillStyle=g;mm.fillRect(0,0,w,h);
     mm.globalCompositeOperation="destination-out";
-    mm.drawImage(bodySoft,0,0);
-    a.globalAlpha=.75*I;a.drawImage(mist,0,0);a.globalAlpha=1;
+    mm.drawImage(soft,0,0);
+    a.globalAlpha=.7*I;
+    a.drawImage(mist,0,0);
+    a.globalAlpha=1;
+  }
 
-    // 5. CRITICAL V17 COMPOSITING:
-    // Aura is painted FIRST, then the untouched original photo is painted
-    // completely on top. The body therefore can never be colorized by aura.
-    x.clearRect(0,0,w,h);
-    x.drawImage(aura,0,0);
-    x.drawImage(src,0,0);
-  });
-}function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
+  // CRITICAL: aura behind the untouched original photo.
+  x.clearRect(0,0,w,h);
+  x.drawImage(aura,0,0);
+  x.drawImage(src,0,0);
+}
+function profile(){let b=$("profile");b.innerHTML="";poses.forEach((p,i)=>{let vals=Z.map(([n,id,k])=>({n,id,k,q:p[id]})).filter(z=>z.q&&z.q.visibility>.45);let score=Math.min(99,Math.round(vals.length/Z.length*100));b.insertAdjacentHTML("beforeend",`<article class="card"><div class="head"><h3>Profil Aura • Subjek ${i+1}</h3><span class="tag">${score}% terbaca</span></div><p>Zona visual yang terpetakan: ${vals.map(z=>z.n).join(", ")}.</p><div>${vals.map(z=>`<span class="chip">${z.n}</span>`).join("")}</div><p>Indeks visualisasi cakupan pose</p><div class="meter"><i style="width:${score}%"></i></div></article>`)})}
 function makeProfile(){
   const zones=Z.map(([name,id,key])=>{
     const q=poses[0]?.[id];
